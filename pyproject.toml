@@ -1,37 +1,45 @@
 [project]
-name = "boss-zhipin-scraper"
-version = "2.2.0"
-description = "BOSS直聘职位抓取工具 — Chrome CDP + API 明文薪资"
+name = "bossmatch"
+version = "0.1.0"
+description = "BossMatch — AI 驱动的 BOSS直聘双向匹配桌面应用"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [
     { name = "eatmoreduck" }
 ]
-keywords = ["zhipin", "boss", "scraper", "cdp", "jobs"]
+keywords = ["zhipin", "boss", "ai", "match", "desktop", "pywebview"]
 
 dependencies = [
     "websocket-client>=1.6.0,<2.0.0",
     "requests>=2.28.0,<3.0.0",
+    "pywebview>=5.0,<6.0",
+    "openai>=1.0.0",
+    "pypdf>=3.0.0",
+    "python-docx>=0.8.11",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [project.optional-dependencies]
-all = [
-    "websocket-client>=1.6.0,<2.0.0",
-    "requests>=2.28.0,<3.0.0",
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.0",
+]
+packaging = [
+    "pyinstaller>=6.0",
 ]
 
 [project.scripts]
-# 模块路径对应 [tool.hatch.build.targets.wheel] 的 packages=["scripts"]，
-# 安装后顶层包名为 scripts，故入口是 scripts.boss_cdp_raw:main
-boss-scraper = "scripts.boss_cdp_raw:main"
-boss-summary = "scripts.job_summary:main"
+bossmatch = "src.app:main"
+
+[project.gui-scripts]
+bossmatch = "src.app:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["scripts"]
-# 城市码表 data/city_codes.json 打进 wheel，pip install 后也能读到（见 issue #24）
-force-include = { "data/city_codes.json" = "data/city_codes.json" }
+packages = ["src"]
+force-include = { "data/city_codes.json" = "data/city_codes.json", "frontend" = "frontend" }
