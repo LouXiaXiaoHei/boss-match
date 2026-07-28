@@ -1,5 +1,7 @@
 """Prompt templates for AI matching."""
 
+from collections import Counter
+
 MATCH_SYSTEM_PROMPT = """你是一名严谨的职业匹配分析师。你的任务是基于【提供的依据】评估求职者与职位的匹配度。
 
 【铁律】
@@ -27,6 +29,15 @@ MATCH_SYSTEM_PROMPT = """你是一名严谨的职业匹配分析师。你的任�
 """
 
 
+def _normalize_tags(value):
+    """Render skill_tags/tags_list to a comma-joined string. Handles list, str, None."""
+    if isinstance(value, list):
+        return ', '.join(value)
+    if value is None:
+        return ''
+    return str(value)
+
+
 def build_match_user_prompt(job_info: dict, resume_chunks: list) -> str:
     """Build user prompt from job info dict and retrieved resume chunks.
 
@@ -41,15 +52,15 @@ def build_match_user_prompt(job_info: dict, resume_chunks: list) -> str:
     ])
 
     job_block = f"""【职位信息】
-标题: {job_info['title']}
+标题: {job_info.get('title', '未知')}
 公司: {job_info.get('company', '未知')}
 薪资: {job_info.get('salary', '未知')}
 地点: {job_info.get('location', '未知')}
 公司规模: {job_info.get('company_scale', '未知')}
 公司阶段: {job_info.get('company_stage', '未知')}
 行业: {job_info.get('company_industry', '未知')}
-技能标签: {', '.join(job_info.get('skill_tags', [])) if isinstance(job_info.get('skill_tags'), list) else job_info.get('skill_tags', '')}
-其他标签: {', '.join(job_info.get('tags_list', [])) if isinstance(job_info.get('tags_list'), list) else job_info.get('tags_list', '')}
+技能标签: {_normalize_tags(job_info.get('skill_tags'))}
+其他标签: {_normalize_tags(job_info.get('tags_list'))}
 
 【职位描述全文】
 {job_info.get('jd', '暂无')}
@@ -105,8 +116,6 @@ def build_summary_user_prompt(job_results, job_infos, supplement_chunks):
         job_infos: Dict mapping job_id to job info dict (with title, company, skill_tags).
         supplement_chunks: List of objects with text attribute.
     """
-    from collections import Counter
-
     results_table = "\n".join([
         f"- {job_infos.get(r.job_id, {}).get('title', '?')} @ {job_infos.get(r.job_id, {}).get('company', '?')}"
         f" | 评分: {r.score:.2f} | 缺口: {', '.join(r.gaps[:3]) if r.gaps else '无'}"
@@ -117,7 +126,7 @@ def build_summary_user_prompt(job_results, job_infos, supplement_chunks):
     all_skills = Counter()
     for r in job_results:
         info = job_infos.get(r.job_id, {})
-        tags = info.get('skill_tags', [])
+        tags = info.get('skill_tags') or []
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(',') if t.strip()]
         for skill in tags:
