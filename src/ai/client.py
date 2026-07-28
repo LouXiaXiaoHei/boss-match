@@ -68,8 +68,8 @@ class AIClient:
         """Call LLM for evidence-based scoring. Returns JobScoreResult."""
         client, model = self._create_client()
 
-        try:
-            response = client.chat.completions.create(
+        def _call():
+            return client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": MATCH_SYSTEM_PROMPT},
@@ -78,20 +78,18 @@ class AIClient:
                 response_format={"type": "json_object"},
                 temperature=0.2,
             )
+
+        try:
+            response = _call()
         except AuthenticationError as e:
             raise ValueError(f"API 认证失败，请检查 API Key: {e}") from e
         except RateLimitError:
             log.warning("API 速率限制，30秒后重试")
             time.sleep(30)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": MATCH_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.2,
-            )
+            try:
+                response = _call()
+            except RateLimitError as e:
+                raise ValueError("API 速率限制，请稍后重试") from e
         except APIConnectionError as e:
             raise ValueError(f"API 连接失败: {e}") from e
 
@@ -114,7 +112,7 @@ class AIClient:
 
         return JobScoreResult(
             job_id=job_id,
-            score=max(0.0, min(1.0, score)),
+            score=score,
             evidence=evidence,
             reasoning=reasoning,
             gaps=gaps,
@@ -145,8 +143,14 @@ class AIClient:
         Deprecated — B5 Matcher rewrite will use match_with_evidence() directly.
         """
         job_id = job_detail.get("job_id", "")
-        user_prompt = build_match_user_prompt(job_detail, [])
-        return self.match_with_evidence(job_id, user_prompt, retrieved_chunks=[])
+        # Wrap resume as a single chunk so it appears in the evidence block
+        from src.ai.retriever import RetrievalResult
+        resume_chunk = RetrievalResult(
+            chunk_id="resume_full", text=resume, source="resume",
+            section="resume", score=1.0, metadata={},
+        )
+        user_prompt = build_match_user_prompt(job_detail, [resume_chunk])
+        return self.match_with_evidence(job_id, user_prompt, retrieved_chunks=["resume_full"])
 
     @staticmethod
     def _parse_json(content: str) -> dict | None:
