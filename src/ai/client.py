@@ -7,7 +7,7 @@ import time
 
 from openai import OpenAI, APIConnectionError, AuthenticationError, RateLimitError
 
-from src.ai.prompts import MATCH_SYSTEM_PROMPT
+from src.ai.prompts import MATCH_SYSTEM_PROMPT, build_match_user_prompt
 from src.db.repository import Repository
 
 log = logging.getLogger(__name__)
@@ -136,6 +136,17 @@ class AIClient:
             temperature=temperature,
             stream=True,
         )
+
+    # -- Backward compat: will be removed when B5 rewrites matcher.py --
+
+    def match_job_seeker(self, resume: str, job_detail: dict) -> JobScoreResult:
+        """Legacy compat: build prompt from resume text + job detail, call LLM.
+
+        Deprecated — B5 Matcher rewrite will use match_with_evidence() directly.
+        """
+        job_id = job_detail.get("job_id", "")
+        user_prompt = build_match_user_prompt(job_detail, [])
+        return self.match_with_evidence(job_id, user_prompt, retrieved_chunks=[])
 
     @staticmethod
     def _parse_json(content: str) -> dict | None:
