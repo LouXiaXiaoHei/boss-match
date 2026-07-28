@@ -313,7 +313,7 @@ class Matcher:
 
     def _score_one_job(self, job_id, ai_client):
         if self._auth_failed.is_set():
-            raise CancelledError("认证失败，已中止")
+            raise AuthFailedError("认证失败，已中止")
         self._check_cancel()
 
         job_info = self._job_infos[job_id]
