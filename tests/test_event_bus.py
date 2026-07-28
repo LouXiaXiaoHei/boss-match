@@ -35,7 +35,6 @@ class TestMatchEvent:
         text = event.to_json()
         payload = json.loads(text)
         assert payload["result"] == "通过"
-        # ensure_ascii=False means Chinese chars appear directly
         assert "通过" in text
 
     def test_slots(self):
@@ -61,7 +60,6 @@ class TestEventBus:
         bus = EventBus(notify_callback=notify)
         bus.start()
 
-        # Emit 100 events from 10 threads concurrently
         n_events = 100
         n_threads = 10
 
@@ -88,21 +86,19 @@ class TestEventBus:
             time.sleep(0.05)
 
         bus.stop()
-        bus._thread.join(timeout=2)
 
-        # All events must have been dispatched
         assert len(dispatched) == n_events, f"Expected {n_events}, got {len(dispatched)}"
-        # Order must be FIFO — each emit is a queue.put, consumer does queue.get
+        # FIFO: each emit is a queue.put, consumer does queue.get
         assert dispatched == sorted(dispatched), "Dispatch order must be FIFO"
 
     def test_stop_exits_consumer_thread(self):
         """stop() must cause the consumer thread to exit cleanly."""
         bus = EventBus(notify_callback=lambda _: None)
         bus.start()
-        assert bus._thread.is_alive()
+        thread = bus._thread
+        assert thread.is_alive()
         bus.stop()
-        bus._thread.join(timeout=2)
-        assert not bus._thread.is_alive()
+        assert not thread.is_alive()
 
     def test_empty_queue_stop(self):
         """stop() on a bus with no events should exit cleanly."""
@@ -110,7 +106,6 @@ class TestEventBus:
         bus.start()
         time.sleep(0.05)
         bus.stop()
-        bus._thread.join(timeout=2)
         assert not bus._thread.is_alive()
 
     def test_emit_after_stop_does_not_crash(self):
@@ -118,24 +113,24 @@ class TestEventBus:
         bus = EventBus(notify_callback=lambda _: None)
         bus.start()
         bus.stop()
-        bus._thread.join(timeout=2)
-        # Emit after stop — just enqueues, no consumer to process
         bus.emit(MatchEvent("late", phase="after_stop"))
 
     def test_notify_receives_correct_json(self):
         """The notify callback must receive the exact JSON from MatchEvent.to_json()."""
         received = []
+        ready = threading.Event()
 
         def notify(payload_json: str):
             received.append(payload_json)
+            if len(received) == 2:
+                ready.set()
 
         bus = EventBus(notify_callback=notify)
         bus.start()
         bus.emit(MatchEvent("match_start", phase="init", job_id="j1"))
         bus.emit(MatchEvent("match_done", phase="end", count=5))
-        time.sleep(0.1)
+        ready.wait(timeout=2.0)
         bus.stop()
-        bus._thread.join(timeout=2)
 
         assert len(received) == 2
         p0 = json.loads(received[0])
@@ -151,6 +146,7 @@ class TestEventBus:
         """A failing notify callback must not crash the consumer loop."""
         call_count = 0
         lock = threading.Lock()
+        all_done = threading.Event()
 
         def flaky_notify(payload_json: str):
             nonlocal call_count
@@ -158,15 +154,70 @@ class TestEventBus:
                 call_count += 1
                 if call_count == 1:
                     raise RuntimeError("simulated failure")
+                if call_count == 3:
+                    all_done.set()
 
         bus = EventBus(notify_callback=flaky_notify)
         bus.start()
         bus.emit(MatchEvent("first"))
         bus.emit(MatchEvent("second"))
         bus.emit(MatchEvent("third"))
-        time.sleep(0.2)
+        all_done.wait(timeout=2.0)
         bus.stop()
-        bus._thread.join(timeout=2)
 
         with lock:
             assert call_count == 3, f"Expected 3 calls, got {call_count}"
+
+    def test_stop_drains_remaining_events(self):
+        """Events queued before stop() must all be dispatched (no event loss)."""
+        dispatched = []
+        lock = threading.Lock()
+
+        def notify(payload_json: str):
+            payload = json.loads(payload_json)
+            with lock:
+                dispatched.append(payload["seq"])
+
+        bus = EventBus(notify_callback=notify)
+        bus.start()
+
+        # Emit 10 events then immediately stop
+        for i in range(10):
+            bus.emit(MatchEvent("tick", phase="drain_test", seq=i))
+        bus.stop()
+
+        with lock:
+            assert len(dispatched) == 10, f"Expected 10, got {len(dispatched)} — events lost on stop"
+
+    def test_double_start_raises(self):
+        """Calling start() while already running must raise RuntimeError."""
+        bus = EventBus(notify_callback=lambda _: None)
+        bus.start()
+        try:
+            with pytest.raises(RuntimeError):
+                bus.start()
+        finally:
+            bus.stop()
+
+    def test_stop_before_start_is_noop(self):
+        """Calling stop() before start() must not raise or leave stale sentinel."""
+        bus = EventBus(notify_callback=lambda _: None)
+        bus.stop()  # should be a no-op
+
+        # Now start should work correctly
+        dispatched = []
+        ready = threading.Event()
+
+        def notify(payload_json: str):
+            dispatched.append(payload_json)
+            ready.set()
+
+        bus2 = EventBus(notify_callback=notify)
+        bus2.start()
+        bus2.emit(MatchEvent("test"))
+        ready.wait(timeout=2.0)
+        bus2.stop()
+        assert len(dispatched) == 1
+
+
+import pytest  # noqa: E402 — needed for pytest.raises in test_double_start_raises

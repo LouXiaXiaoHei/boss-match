@@ -26,11 +26,13 @@ class MatchEvent:
 
 
 class EventBus:
-    """Single-producer / multi-producer, single-consumer event bus.
+    """Multi-producer, single-consumer event bus.
 
     Producers call ``emit(event)`` which enqueues and returns immediately.
     A dedicated consumer thread dequeues events serially and pushes each
     via the ``notify_callback`` supplied at construction time.
+
+    Lifecycle: ``start()`` → ``emit()`` × N → ``stop()`` (drains remaining events).
     """
 
     def __init__(self, notify_callback):
@@ -38,29 +40,55 @@ class EventBus:
         self._queue: queue.Queue[MatchEvent | None] = queue.Queue()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
 
     def start(self):
-        """Clear stop flag and launch the consumer daemon thread."""
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._consume, name="event-bus", daemon=True)
-        self._thread.start()
+        """Launch the consumer daemon thread. Raises if already running."""
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise RuntimeError("EventBus already running")
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._consume, name="event-bus", daemon=True)
+            self._thread.start()
         log.info("EventBus consumer started")
 
-    def stop(self):
-        """Signal the consumer to stop and enqueue the sentinel."""
+    def stop(self, timeout: float = 5.0):
+        """Signal the consumer to stop, drain remaining events, and wait for exit.
+
+        Blocks until the consumer thread exits or *timeout* seconds elapse.
+        Safe to call even if the bus was never started.
+        """
+        with self._lock:
+            thread = self._thread
+        if thread is None or not thread.is_alive():
+            return
         self._stop.set()
-        self._queue.put(None)
+        self._queue.put(None)  # sentinel to unblock queue.get()
+        thread.join(timeout=timeout)
 
     def emit(self, event: MatchEvent):
         """Enqueue an event — returns immediately (non-blocking)."""
         self._queue.put(event)
 
     def _consume(self):
-        """Consumer loop: serially dequeue events and notify frontend."""
-        while not self._stop.is_set():
+        """Consumer loop: serially dequeue events and notify frontend.
+
+        Exits on the None sentinel, then drains any remaining queued events
+        before stopping so no events are lost on shutdown.
+        """
+        while True:
             event = self._queue.get()
             if event is None:
                 break
+            try:
+                self._notify(event.to_json())
+            except Exception:
+                log.exception("EventBus notify error for event type=%s", event.type)
+        # Drain remaining events after sentinel
+        while not self._queue.empty():
+            event = self._queue.get()
+            if event is None:
+                continue
             try:
                 self._notify(event.to_json())
             except Exception:
