@@ -293,6 +293,10 @@ python3 scripts/boss_cdp_raw.py --keyword "AI Agent" --city 上海 --pages 3 --c
 
 MIT
 
+## 致谢
+
+本项目灵感来源于 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper)，感谢原作者的开源贡献。
+
 ## 友情链接
 
 - [LINUX DO](https://linux.do/) — 真诚、友善、充满活力的技术社区，本项目认可并推荐。

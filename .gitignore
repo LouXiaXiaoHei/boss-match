@@ -32,6 +32,8 @@ htmlcov/
 SKILL.md
 .agents/
 .playwright-mcp/
+CHANGELOG.md
+CONTRIBUTING.md
 
 # Test files
 tests/
