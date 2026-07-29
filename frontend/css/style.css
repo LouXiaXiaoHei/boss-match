@@ -1074,3 +1074,372 @@ body {
     font-size: 13px !important;
     line-height: 1.6 !important;
 }
+
+/* ---- Match Progress (RAG Phases) ---- */
+
+.match-progress-card {
+    background: #16191f;
+    border: 1px solid #232730;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.match-progress-card .phase-label {
+    font-size: 14px;
+    color: #4a9eff;
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.match-progress-card .phase-detail {
+    font-size: 13px;
+    color: #8b92a0;
+    margin-bottom: 8px;
+}
+
+/* ---- Model Download Progress ---- */
+
+.model-download-card {
+    background: #16191f;
+    border: 1px solid #232730;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.model-download-card .phase-label {
+    font-size: 14px;
+    color: #4a9eff;
+    font-weight: 500;
+}
+
+.model-download-card .phase-detail {
+    font-size: 13px;
+    color: #8b92a0;
+    margin-top: 4px;
+}
+
+/* ---- Job Evidence (in match result card) ---- */
+
+.job-evidence {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #232730;
+}
+
+.job-evidence h5 {
+    font-size: 12px;
+    color: #8b92a0;
+    margin-bottom: 6px;
+}
+
+.evidence-item {
+    font-size: 12px;
+    color: #c0c0c0;
+    padding: 4px 0;
+    line-height: 1.5;
+}
+
+.evidence-source {
+    color: #4a9eff;
+    font-size: 11px;
+}
+
+.job-gaps {
+    margin-top: 8px;
+}
+
+.job-gaps h5 {
+    font-size: 12px;
+    color: #f0a030;
+    margin-bottom: 4px;
+}
+
+.gap-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #2a251a;
+    color: #f0a030;
+    border-radius: 4px;
+    font-size: 11px;
+    margin: 2px 4px 2px 0;
+}
+
+/* ---- Summary Streaming ---- */
+
+.summary-stream {
+    background: #16191f;
+    border: 1px solid #232730;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #c0c0c0;
+    white-space: pre-wrap;
+}
+
+.summary-stream::-webkit-scrollbar {
+    width: 6px;
+}
+
+.summary-stream::-webkit-scrollbar-thumb {
+    background: #232730;
+    border-radius: 3px;
+}
+
+/* ---- Summary Structured ---- */
+
+.summary-structured {
+    background: #16191f;
+    border: 1px solid #232730;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+.summary-section {
+    margin-bottom: 20px;
+}
+
+.summary-section:last-child {
+    margin-bottom: 0;
+}
+
+.summary-section h4 {
+    font-size: 14px;
+    color: #e6e6e6;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #232730;
+}
+
+/* ---- Skill Grid ---- */
+
+.skill-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.skill-col h5 {
+    font-size: 12px;
+    color: #8b92a0;
+    margin-bottom: 8px;
+}
+
+.skill-tag {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    margin: 2px 4px 2px 0;
+}
+
+.skill-tag.matched {
+    background: #1a2a1f;
+    color: #6fcf97;
+}
+
+.skill-tag.gap {
+    background: #2a251a;
+    color: #f0a030;
+}
+
+/* ---- Interview Questions ---- */
+
+.interview-questions {
+    list-style: decimal;
+    padding-left: 20px;
+    font-size: 13px;
+    color: #c0c0c0;
+    line-height: 1.7;
+}
+
+.focus-areas {
+    list-style: disc;
+    padding-left: 20px;
+    font-size: 13px;
+    color: #c0c0c0;
+    line-height: 1.7;
+}
+
+/* ---- Action Plan ---- */
+
+.action-plan {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.action-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #0f1115;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #c0c0c0;
+}
+
+.priority {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.priority.high {
+    background: #2a1a1a;
+    color: #e05050;
+}
+
+.priority.medium {
+    background: #2a251a;
+    color: #f0a030;
+}
+
+.priority.low {
+    background: #1a2a1f;
+    color: #6fcf97;
+}
+
+.action-timeline {
+    font-size: 11px;
+    color: #8b92a0;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+/* ---- Overall Strategy ---- */
+
+.overall-strategy {
+    font-size: 13px;
+    color: #c0c0c0;
+    line-height: 1.8;
+}
+
+/* ---- Company Analysis ---- */
+
+.tier-distribution {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.tier-item {
+    text-align: center;
+}
+
+.tier-count {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.tier-count.high { color: #6fcf97; }
+.tier-count.medium { color: #f0a030; }
+.tier-count.low { color: #e05050; }
+
+.tier-label {
+    font-size: 11px;
+    color: #8b92a0;
+}
+
+.industry-insights {
+    list-style: disc;
+    padding-left: 20px;
+    font-size: 13px;
+    color: #c0c0c0;
+    line-height: 1.7;
+}
+
+/* ---- Supplement Section ---- */
+
+.supplement-section {
+    background: #16191f;
+    border: 1px solid #232730;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.supplement-section h3 {
+    font-size: 16px;
+    color: #e6e6e6;
+    margin-bottom: 12px;
+}
+
+.supplement-upload-area {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.supplement-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.supplement-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #0f1115;
+    border: 1px solid #232730;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #c0c0c0;
+}
+
+.supplement-item .btn-remove {
+    background: none;
+    border: none;
+    color: #e05050;
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 14px;
+}
+
+.supplement-item .btn-remove:hover {
+    color: #ff6060;
+}
+
+/* ---- Match Error / Cancelled ---- */
+
+.match-status-card {
+    background: #16191f;
+    border: 1px solid #232730;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.match-status-card.error {
+    border-color: #e05050;
+}
+
+.match-status-card.cancelled {
+    border-color: #f0a030;
+}
+
+.match-status-card .status-text {
+    font-size: 14px;
+    color: #e6e6e6;
+}
+
+.match-status-card .error-detail {
+    font-size: 12px;
+    color: #8b92a0;
+    margin-top: 6px;
+}
