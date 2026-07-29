@@ -38,6 +38,13 @@
         expandedJobId: null,
         availableJobs: [],
         availableJobsLoaded: false,
+        supplements: [],         // [{filename, content}] uploaded supplement texts
+        phase: 'idle',          // current RAG phase: idle, init_model, build_index, job_scoring, summary, completed, failed, cancelled
+        phaseProgress: null,    // {current, total} for current phase
+        modelDownloadStatus: null,  // {progress, status}
+        streamedJobs: [],       // jobs scored during this match session (from job_scored events)
+        summaryBuffer: '',      // accumulated summary stream text
+        summaryStructured: null, // parsed structured summary JSON
     };
 
     // ---- Utility ----
@@ -325,7 +332,7 @@
 
     function renderMatchesPage() {
         const progress = matchState.matchProgress;
-        const isMatching = progress && progress.status === 'running';
+        const isMatching = matchState.phase !== 'idle' && matchState.phase !== 'completed' && matchState.phase !== 'cancelled' && matchState.phase !== 'failed';
         const hasResults = matchState.results.length > 0;
         const resumeStatus = !matchState.resume.trim()
             ? '<span class="resume-status empty">请先填写简历</span>'
@@ -354,6 +361,24 @@
                         ${matchState.resumeLoaded && !matchState.resumeDirty ? '已保存' : '保存简历'}
                     </button>
                     ${resumeStatus}
+                </div>
+            </div>
+
+            <div class="supplement-section">
+                <h3>补充材料（可选）</h3>
+                <div class="supplement-upload-area">
+                    <button class="btn btn-secondary btn-sm" id="btn-upload-supplement">上传补充材料</button>
+                    <span class="upload-hint">上传面试经验、目标公司资料等，增强匹配依据</span>
+                    <input type="file" id="supplement-file-input" accept=".pdf,.docx,.txt,.md" style="display:none">
+                    <span class="upload-status" id="supplement-upload-status"></span>
+                </div>
+                <div class="supplement-list" id="supplement-list">
+                    ${matchState.supplements.map((s, i) => `
+                        <div class="supplement-item">
+                            <span>${s.filename}</span>
+                            <button class="btn-remove" data-remove-supplement="${i}">&times;</button>
+                        </div>
+                    `).join('')}
                 </div>
             </div>
 
@@ -396,10 +421,7 @@
                 <button class="btn btn-danger" id="btn-cancel-match">取消匹配</button>` : ''}
             </div>
 
-            <div id="match-dynamic-area">
-                ${isMatching ? renderMatchProgress(progress) : ''}
-                ${hasResults ? renderMatchResults() : ''}
-            </div>
+            <div id="match-dynamic-area"></div>
         </div>`;
     }
 
@@ -628,18 +650,25 @@
             if (result?.ok && result.data.status !== 'idle') {
                 matchState.matchProgress = result.data;
                 if (result.data.status === 'running') {
-                    await loadMatchResults();
-                }
-                updateMatchDynamicArea();
-                if (result.data.status !== 'running') {
+                    // Sync phase from progress data
+                    if (result.data.phase) {
+                        matchState.phase = result.data.phase;
+                        matchState.phaseProgress = { current: result.data.completed || 0, total: result.data.total_jobs || 0 };
+                    }
+                } else {
                     stopMatchPolling();
                     if (result.data.status === 'completed') {
+                        matchState.phase = 'completed';
                         await loadMatchResults();
-                        updateMatchDynamicArea();
+                    } else if (result.data.status === 'cancelled') {
+                        matchState.phase = 'cancelled';
+                    } else if (result.data.status === 'failed') {
+                        matchState.phase = 'failed';
                     }
+                    updateMatchDynamicArea();
                 }
             }
-        }, 2000);
+        }, 3000);
     }
 
     function stopMatchPolling() {
@@ -723,14 +752,55 @@
     function updateMatchDynamicArea() {
         const area = document.getElementById('match-dynamic-area');
         if (!area) return;
-        const progress = matchState.matchProgress;
-        const isMatching = progress && progress.status === 'running';
-        const hasResults = matchState.results.length > 0;
-        area.innerHTML = `
-            ${isMatching ? renderMatchProgress(progress) : ''}
-            ${hasResults ? renderMatchResults() : ''}
-        `;
+
+        const phase = matchState.phase;
+        let html = '';
+
+        // Model download progress
+        if (matchState.modelDownloadStatus) {
+            const ds = matchState.modelDownloadStatus;
+            html += `<div class="model-download-card">
+                <div class="phase-label">下载嵌入模型</div>
+                <div class="phase-detail">${ds.status || '准备中...'}</div>
+                <div class="progress-bar-track"><div class="progress-bar-fill" style="width: ${Math.round((ds.progress || 0) * 100)}%"></div></div>
+            </div>`;
+        }
+
+        // Phase progress
+        if (phase === 'init_model' && !matchState.modelDownloadStatus) {
+            html += `<div class="match-progress-card"><div class="phase-label">初始化模型</div><div class="phase-detail">加载中...</div></div>`;
+        } else if (phase === 'build_index') {
+            const p = matchState.phaseProgress || {current: 0, total: 0};
+            const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+            html += `<div class="match-progress-card"><div class="phase-label">构建索引</div><div class="phase-detail">${p.current}/${p.total} 片段</div><div class="progress-bar-track"><div class="progress-bar-fill" style="width: ${pct}%"></div></div></div>`;
+        } else if (phase === 'job_scoring') {
+            const p = matchState.phaseProgress || {current: 0, total: 0};
+            const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+            html += `<div class="match-progress-card"><div class="phase-label">AI 匹配评分</div><div class="phase-detail">${p.current}/${p.total} 个职位</div><div class="progress-bar-track"><div class="progress-bar-fill" style="width: ${pct}%"></div></div></div>`;
+        } else if (phase === 'summary') {
+            html += `<div class="match-progress-card"><div class="phase-label">生成综合分析</div><div class="phase-detail">AI 分析中...</div></div>`;
+        } else if (phase === 'cancelled') {
+            html += `<div class="match-status-card cancelled"><div class="status-text">匹配已取消</div></div>`;
+        } else if (phase === 'failed') {
+            html += `<div class="match-status-card error"><div class="status-text">匹配失败</div></div>`;
+        }
+
+        // Match results from DB (completed matches)
+        if (matchState.results.length > 0 && phase !== 'job_scoring') {
+            html += renderMatchResults();
+        }
+
+        area.innerHTML = html;
         bindMatchResultEvents();
+
+        // Restore streamed summary if any
+        if (matchState.summaryBuffer && !document.getElementById('summary-stream')) {
+            const streamEl = document.createElement('div');
+            streamEl.id = 'summary-stream';
+            streamEl.className = 'summary-stream';
+            streamEl.textContent = matchState.summaryBuffer;
+            area.appendChild(streamEl);
+        }
     }
 
     function bindMatchResultEvents() {
@@ -1062,11 +1132,40 @@
                 alert('请先保存简历');
                 return;
             }
-            const result = await api.startMatch(jobIds);
+            // Reset match state for new session
+            matchState.phase = 'init_model';
+            matchState.phaseProgress = null;
+            matchState.modelDownloadStatus = null;
+            matchState.streamedJobs = [];
+            matchState.summaryBuffer = '';
+            matchState.summaryStructured = null;
+
+            const supplements = matchState.supplements.map(s => s.content);
+            const result = await api.startMatch(jobIds, supplements);
             if (result?.ok) {
                 startMatchPolling();
-                renderPage();
+                updateMatchDynamicArea();
+                // Update start button state
+                const matchBtn = document.getElementById('btn-start-match');
+                if (matchBtn) {
+                    matchBtn.disabled = true;
+                    matchBtn.textContent = '匹配中...';
+                }
+                // Show cancel button
+                const actions = document.querySelector('.match-actions');
+                if (actions && !document.getElementById('btn-cancel-match')) {
+                    const cancelBtn = document.createElement('button');
+                    cancelBtn.className = 'btn btn-danger';
+                    cancelBtn.id = 'btn-cancel-match';
+                    cancelBtn.textContent = '取消匹配';
+                    cancelBtn.addEventListener('click', async () => {
+                        await api.cancelMatch();
+                        stopMatchPolling();
+                    });
+                    actions.appendChild(cancelBtn);
+                }
             } else {
+                matchState.phase = 'idle';
                 alert('匹配启动失败: ' + (result?.error || '未知错误'));
             }
         });
@@ -1075,6 +1174,62 @@
         document.getElementById('btn-cancel-match')?.addEventListener('click', async () => {
             await api.cancelMatch();
             stopMatchPolling();
+        });
+
+        // Supplement upload
+        document.getElementById('btn-upload-supplement')?.addEventListener('click', () => {
+            document.getElementById('supplement-file-input')?.click();
+        });
+
+        document.getElementById('supplement-file-input')?.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const statusEl = document.getElementById('supplement-upload-status');
+            if (statusEl) {
+                statusEl.textContent = `正在解析 ${file.name}...`;
+                statusEl.className = 'upload-status parsing';
+            }
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                const base64 = event.target.result.split(',')[1];
+                const result = await api.uploadSupplement(file.name, base64);
+                if (result?.ok) {
+                    matchState.supplements.push({ filename: file.name, content: result.data.content });
+                    if (statusEl) {
+                        statusEl.textContent = `${file.name} 已添加`;
+                        statusEl.className = 'upload-status success';
+                    }
+                    // Re-render supplement list
+                    const listEl = document.getElementById('supplement-list');
+                    if (listEl) {
+                        const i = matchState.supplements.length - 1;
+                        const item = document.createElement('div');
+                        item.className = 'supplement-item';
+                        item.innerHTML = `<span>${file.name}</span><button class="btn-remove" data-remove-supplement="${i}">&times;</button>`;
+                        item.querySelector('.btn-remove').addEventListener('click', () => {
+                            matchState.supplements.splice(i, 1);
+                            item.remove();
+                        });
+                        listEl.appendChild(item);
+                    }
+                } else {
+                    if (statusEl) {
+                        statusEl.textContent = result?.error || '解析失败';
+                        statusEl.className = 'upload-status error';
+                    }
+                }
+                e.target.value = '';
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Supplement remove buttons
+        document.querySelectorAll('[data-remove-supplement]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.removeSupplement);
+                matchState.supplements.splice(idx, 1);
+                btn.closest('.supplement-item')?.remove();
+            });
         });
 
         // Match page - Expand/collapse result detail
@@ -1100,6 +1255,241 @@
         }
     }
 
+    // ---- RAG Match Event Handlers ----
+
+    function handlePhaseStart(evt) {
+        matchState.phase = evt.phase;
+        matchState.phaseProgress = { current: 0, total: evt.total || 0 };
+        matchState.modelDownloadStatus = null;
+        updateMatchDynamicArea();
+    }
+
+    function handlePhaseProgress(evt) {
+        matchState.phaseProgress = { current: evt.current || 0, total: evt.total || 0 };
+        updateMatchDynamicArea();
+    }
+
+    function handlePhaseDone(evt) {
+        // Phase complete, keep phase name for display
+    }
+
+    function handleModelDownload(evt) {
+        matchState.modelDownloadStatus = { progress: evt.progress, status: evt.status };
+        updateMatchDynamicArea();
+    }
+
+    function handleJobScored(evt) {
+        // Add to streamedJobs and append a card to the DOM
+        matchState.streamedJobs.push({
+            target_job_id: evt.job_id,
+            title: evt.title,
+            score: evt.score,
+            evidence: evt.evidence,
+            reasoning: evt.reasoning,
+            gaps: evt.gaps,
+            suggestions: evt.suggestions,
+            retrieved_chunks: evt.retrieved_chunks,
+        });
+        appendJobCard(evt);
+    }
+
+    function handleJobFailed(evt) {
+        // Show failure in dynamic area
+        const area = document.getElementById('match-dynamic-area');
+        if (area) {
+            const failEl = document.createElement('div');
+            failEl.className = 'match-status-card error';
+            failEl.innerHTML = `<div class="status-text">❌ ${evt.title || evt.job_id} 匹配失败</div><div class="error-detail">${evt.error}</div>`;
+            area.appendChild(failEl);
+        }
+    }
+
+    function handleSummaryChunk(evt) {
+        matchState.summaryBuffer += (evt.content || '');
+        let streamEl = document.getElementById('summary-stream');
+        if (!streamEl) {
+            // Create the stream container if not exists
+            const area = document.getElementById('match-dynamic-area');
+            if (!area) return;
+            streamEl = document.createElement('div');
+            streamEl.id = 'summary-stream';
+            streamEl.className = 'summary-stream';
+            area.appendChild(streamEl);
+        }
+        streamEl.textContent = matchState.summaryBuffer;
+        streamEl.scrollTop = streamEl.scrollHeight;
+    }
+
+    function handleSummaryDone(evt) {
+        matchState.summaryStructured = evt.structured;
+        // Replace stream with structured view
+        const streamEl = document.getElementById('summary-stream');
+        if (streamEl && evt.structured) {
+            streamEl.replaceWith(renderStructuredSummaryEl(evt.structured));
+        } else if (streamEl && evt.raw) {
+            streamEl.textContent = evt.raw;
+        }
+    }
+
+    function handleMatchCompleted(evt) {
+        matchState.phase = 'completed';
+        stopMatchPolling();
+        loadMatchResults().then(() => updateMatchDynamicArea());
+    }
+
+    function handleCancelled(evt) {
+        matchState.phase = 'cancelled';
+        stopMatchPolling();
+        updateMatchDynamicArea();
+    }
+
+    function handleMatchError(evt) {
+        matchState.phase = 'failed';
+        stopMatchPolling();
+        updateMatchDynamicArea();
+    }
+
+    function appendJobCard(evt) {
+        const container = document.getElementById('match-result-cards');
+        if (!container) {
+            // Need to create the results area first
+            const area = document.getElementById('match-dynamic-area');
+            if (!area) return;
+            const resultsArea = document.createElement('div');
+            resultsArea.className = 'match-results-area';
+            resultsArea.innerHTML = `
+                <div class="results-header">
+                    <span class="results-count">匹配结果: <span id="match-result-count">1</span> 个职位</span>
+                </div>
+                <div class="match-result-cards" id="match-result-cards"></div>
+            `;
+            area.appendChild(resultsArea);
+        }
+        const cardsContainer = document.getElementById('match-result-cards');
+        if (!cardsContainer) return;
+
+        const countEl = document.getElementById('match-result-count');
+        if (countEl) countEl.textContent = matchState.streamedJobs.length;
+
+        const scorePercent = Math.round((evt.score || 0) * 100);
+        const scoreClass = (evt.score || 0) >= 0.7 ? 'high' : (evt.score || 0) >= 0.4 ? 'medium' : 'low';
+        const suggestions = Array.isArray(evt.suggestions) ? evt.suggestions : [];
+        const gaps = Array.isArray(evt.gaps) ? evt.gaps : [];
+        const evidence = Array.isArray(evt.evidence) ? evt.evidence : [];
+
+        const card = document.createElement('div');
+        card.className = 'match-result-card';
+        card.dataset.jobId = evt.job_id;
+        card.innerHTML = `
+            <div class="match-result-header" data-toggle-detail="${evt.job_id}">
+                <div class="match-result-info">
+                    <span class="match-result-title">${evt.title || '未知职位'}</span>
+                    <span class="score-badge ${scoreClass}">${scorePercent}%</span>
+                </div>
+            </div>
+            <div class="match-result-detail" style="display:none">
+                <div class="match-reasoning">
+                    <h4>匹配分析</h4>
+                    <p>${evt.reasoning || '暂无分析'}</p>
+                </div>
+                ${gaps.length ? `
+                <div class="job-gaps">
+                    <h5>能力缺口</h5>
+                    ${gaps.map(g => `<span class="gap-tag">${g}</span>`).join('')}
+                </div>` : ''}
+                ${evidence.length ? `
+                <div class="job-evidence">
+                    <h5>引用依据</h5>
+                    ${evidence.map(e => `<div class="evidence-item">${e.claim || e} <span class="evidence-source">${e.source || ''}</span></div>`).join('')}
+                </div>` : ''}
+                ${suggestions.length ? `
+                <div class="match-suggestions">
+                    <h4>改进建议</h4>
+                    <ul>${suggestions.map(s => `<li>${s}</li>`).join('')}</ul>
+                </div>` : ''}
+            </div>
+        `;
+        cardsContainer.appendChild(card);
+
+        // Bind expand/collapse
+        card.querySelector('[data-toggle-detail]')?.addEventListener('click', () => {
+            const detail = card.querySelector('.match-result-detail');
+            if (detail) {
+                detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+            }
+        });
+    }
+
+    function renderStructuredSummaryEl(s) {
+        const el = document.createElement('div');
+        el.className = 'summary-structured';
+        el.id = 'summary-stream'; // reuse id so subsequent chunks can find it
+
+        let html = '';
+
+        // Skill Analysis
+        if (s.skill_analysis) {
+            const sa = s.skill_analysis;
+            html += `<div class="summary-section"><h4>技能分析</h4><div class="skill-grid">`;
+            if (sa.matching_skills?.length) {
+                html += `<div class="skill-col"><h5>已具备</h5>${sa.matching_skills.map(sk => `<span class="skill-tag matched">${sk}</span>`).join('')}</div>`;
+            }
+            if (sa.missing_skills?.length) {
+                html += `<div class="skill-col"><h5>需提升</h5>${sa.missing_skills.map(sk => `<span class="skill-tag gap">${sk}</span>`).join('')}</div>`;
+            }
+            html += `</div></div>`;
+        }
+
+        // Company Analysis
+        if (s.company_analysis) {
+            const ca = s.company_analysis;
+            html += `<div class="summary-section"><h4>公司分析</h4>`;
+            if (ca.tier_distribution) {
+                html += `<div class="tier-distribution">`;
+                const td = ca.tier_distribution;
+                if (td['高匹配'] !== undefined) html += `<div class="tier-item"><div class="tier-count high">${td['高匹配']}</div><div class="tier-label">高匹配</div></div>`;
+                if (td['中匹配'] !== undefined) html += `<div class="tier-item"><div class="tier-count medium">${td['中匹配']}</div><div class="tier-label">中匹配</div></div>`;
+                if (td['低匹配'] !== undefined) html += `<div class="tier-item"><div class="tier-count low">${td['低匹配']}</div><div class="tier-label">低匹配</div></div>`;
+                html += `</div>`;
+            }
+            if (ca.industry_insights?.length) {
+                html += `<ul class="industry-insights">${ca.industry_insights.map(i => `<li>${i}</li>`).join('')}</ul>`;
+            }
+            html += `</div>`;
+        }
+
+        // Interview Prep
+        if (s.interview_prep) {
+            const ip = s.interview_prep;
+            html += `<div class="summary-section"><h4>面试准备</h4>`;
+            if (ip.likely_questions?.length) {
+                html += `<ol class="interview-questions">${ip.likely_questions.map(q => `<li>${q}</li>`).join('')}</ol>`;
+            }
+            if (ip.focus_areas?.length) {
+                html += `<h5 style="font-size:12px;color:#8b92a0;margin:8px 0 4px">重点方向</h5><ul class="focus-areas">${ip.focus_areas.map(f => `<li>${f}</li>`).join('')}</ul>`;
+            }
+            html += `</div>`;
+        }
+
+        // Action Plan
+        if (s.action_plan?.length) {
+            html += `<div class="summary-section"><h4>行动计划</h4><div class="action-plan">`;
+            s.action_plan.forEach(a => {
+                const pClass = (a.priority === '高' || a.priority === 'high') ? 'high' : (a.priority === '低' || a.priority === 'low') ? 'low' : 'medium';
+                html += `<div class="action-item"><span class="priority ${pClass}">${a.priority}</span><span>${a.action}</span><span class="action-timeline">${a.timeline || ''}</span></div>`;
+            });
+            html += `</div></div>`;
+        }
+
+        // Overall Strategy
+        if (s.overall_strategy) {
+            html += `<div class="summary-section"><h4>整体策略</h4><div class="overall-strategy">${s.overall_strategy}</div></div>`;
+        }
+
+        el.innerHTML = html;
+        return el;
+    }
+
     // ---- Frontend progress callback (called by backend via evaluate_js) ----
 
     window.__onScrapeProgress = function(payload) {
@@ -1120,21 +1510,27 @@
         }
     };
 
-    window.__onMatchProgress = function(payload) {
-        if (payload && payload.type === 'match') {
-            matchState.matchProgress = payload;
-            if (currentPage === 'matches') {
-                if (payload.status === 'running') {
-                    loadMatchResults().then(() => updateMatchDynamicArea());
-                } else {
-                    stopMatchPolling();
-                    if (payload.status === 'completed') {
-                        loadMatchResults().then(() => updateMatchDynamicArea());
-                    } else {
-                        updateMatchDynamicArea();
-                    }
+    window.__onMatchProgress = function(evt) {
+        if (!evt) return;
+        switch (evt.type) {
+            case 'phase_start':      handlePhaseStart(evt); break;
+            case 'phase_progress':   handlePhaseProgress(evt); break;
+            case 'phase_done':       handlePhaseDone(evt); break;
+            case 'model_download_progress': handleModelDownload(evt); break;
+            case 'job_scored':       handleJobScored(evt); break;
+            case 'job_failed':       handleJobFailed(evt); break;
+            case 'summary_chunk':    handleSummaryChunk(evt); break;
+            case 'summary_done':     handleSummaryDone(evt); break;
+            case 'match_completed':  handleMatchCompleted(evt); break;
+            case 'cancelled':        handleCancelled(evt); break;
+            case 'error':            handleMatchError(evt); break;
+            default:
+                // Backward compat for old format
+                if (evt.type === 'match' || evt.status) {
+                    matchState.matchProgress = evt;
+                    updateMatchDynamicArea();
                 }
-            }
+                break;
         }
     };
 
