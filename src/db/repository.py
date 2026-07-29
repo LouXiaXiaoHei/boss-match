@@ -458,6 +458,18 @@ class Repository:
         finally:
             conn.close()
 
+    def clear_match_results(self, identity: str, source_id: int = 1):
+        """Delete all match results and summary for a given identity/source."""
+        conn = self.db._conn()
+        try:
+            conn.execute("DELETE FROM match_result WHERE identity=? AND source_id=?",
+                         (identity, source_id))
+            conn.execute("DELETE FROM match_summary WHERE identity=? AND source_id=?",
+                         (identity, source_id))
+            conn.commit()
+        finally:
+            conn.close()
+
     # ---- Match Summary ----
 
     def save_match_summary(self, identity: str, source_id: int = 1,

@@ -55,9 +55,11 @@ class MatchTask:
 class Matcher:
     """RAG matching orchestrator: coordinates three-phase produce-consume."""
 
-    def __init__(self, repo: Repository, notify_callback: Callable | None = None):
+    def __init__(self, repo: Repository, notify_callback: Callable | None = None,
+                 embedder: Embedder | None = None):
         self.repo = repo
         self._notify = notify_callback
+        self._embedder = embedder
         self._lock = threading.Lock()
         self._current_task: MatchTask | None = None
         self._cancel_event = threading.Event()
@@ -85,6 +87,9 @@ class Matcher:
             self._current_task = task
             self._cancel_event.clear()
             self._auth_failed.clear()
+
+        # Clear previous match results for this source before starting fresh
+        self.repo.clear_match_results("geek", source_id=1)
 
         self._bus = EventBus(self._notify)
         self._bus.start()
@@ -149,12 +154,18 @@ class Matcher:
 
     def _init_embedder(self):
         self._check_cancel()
+        self._current_task.phase = "init_model"
         self._bus.emit(MatchEvent("phase_start", "init_model"))
 
-        def progress_callback(progress, status):
+        if self._embedder and self._embedder._model is not None:
+            # Model already loaded (pre-initialized by bridge)
+            self._bus.emit(MatchEvent("phase_done", "init_model"))
+            return
+
+        def progress_callback(progress, status, speed=0.0):
             self._check_cancel()
             self._bus.emit(MatchEvent("model_download_progress",
-                                       progress=progress, status=status))
+                                       progress=progress, status=status, speed=speed))
 
         self._embedder = Embedder()
         self._embedder.ensure_model(progress_callback)
@@ -167,6 +178,7 @@ class Matcher:
 
     def _build_index(self, resume, job_ids, supplements):
         self._check_cancel()
+        self._current_task.phase = "build_index"
         chunker = Chunker()
         chunks_to_embed = []
 
@@ -238,6 +250,7 @@ class Matcher:
 
     def _score_jobs(self, job_ids, concurrency):
         self._check_cancel()
+        self._current_task.phase = "job_scoring"
         self._bus.emit(MatchEvent("phase_start", "job_scoring", total=len(job_ids)))
 
         ai_client = AIClient(self.repo)
@@ -348,6 +361,7 @@ class Matcher:
             return
 
         self._check_cancel()
+        self._current_task.phase = "summary"
         self._bus.emit(MatchEvent("phase_start", "summary"))
 
         supplement_chunks = self._retriever.retrieve_supplements(top_k=3)

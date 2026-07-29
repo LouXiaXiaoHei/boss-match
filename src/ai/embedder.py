@@ -14,13 +14,22 @@ _DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 class Embedder:
     """Embedder with lazy model loading and download progress events."""
 
-    DEFAULT_MODEL = "BAAI/bge-small-zh-v1.1"
+    DEFAULT_MODEL = "BAAI/bge-small-zh-v1.5"
 
     def __init__(self, model_name: str = None, cache_dir: str = None):
         self.model_name = model_name or self.DEFAULT_MODEL
         self.cache_dir = os.path.expanduser(cache_dir or "~/.boss-match/models")
         self._model = None
         self._lock = threading.Lock()
+
+    def _local_model_path(self) -> str | None:
+        """Check if model files exist in local manual-download directory."""
+        # Manual download layout: cache_dir/manual/<model_slug>/
+        slug = self.model_name.replace("/", "_")
+        local_dir = os.path.join(self.cache_dir, "manual", slug)
+        if os.path.isfile(os.path.join(local_dir, "config.json")):
+            return local_dir
+        return None
 
     def ensure_model(self, progress_callback=None) -> None:
         """Load model on first call. Pushes download progress via callback."""
@@ -33,27 +42,47 @@ class Embedder:
 
             os.makedirs(self.cache_dir, exist_ok=True)
 
-            # Set HF endpoint for China if not already set
+            # Prefer local model files if available
+            local_path = self._local_model_path()
+            if local_path:
+                log.info(f"Loading embedding model from local path: {local_path}")
+                if progress_callback:
+                    progress_callback(0.5, "downloading", 0.0)
+                from sentence_transformers import SentenceTransformer
+                self._model = SentenceTransformer(local_path)
+                if progress_callback:
+                    progress_callback(1.0, "ready", 0.0)
+                log.info(f"Embedding model loaded from local: {local_path}")
+                return
+
+            # Fallback: download from HF mirror
             if not os.environ.get("HF_ENDPOINT") and not os.environ.get("HUGGINGFACE_HUB_URL"):
                 os.environ["HF_ENDPOINT"] = _DEFAULT_HF_ENDPOINT
 
             log.info(f"Loading embedding model: {self.model_name}")
 
             if progress_callback:
-                progress_callback(0.1, "downloading")
+                progress_callback(0.1, "downloading", 0.0)
 
             # Monitor download by checking cache dir size in a side thread
             stop_monitor = threading.Event()
+            _prev_size = [0]
+            _prev_time = [time.time()]
 
             def _monitor():
                 while not stop_monitor.is_set():
                     try:
                         size = _dir_size(self.cache_dir)
+                        now = time.time()
+                        dt = now - _prev_time[0]
+                        speed = (size - _prev_size[0]) / dt / (1024 * 1024) if dt > 0 else 0.0
+                        _prev_size[0] = size
+                        _prev_time[0] = now
                         pct = min(0.9, 0.1 + size / (200 * 1024 * 1024) * 0.8)
-                        progress_callback(pct, "downloading")
+                        progress_callback(pct, "downloading", max(0.0, speed))
                     except Exception:
                         pass
-                    time.sleep(0.5)
+                    time.sleep(1.0)
 
             t = threading.Thread(target=_monitor, daemon=True)
             t.start()
@@ -68,7 +97,7 @@ class Embedder:
                 stop_monitor.set()
 
             if progress_callback:
-                progress_callback(1.0, "ready")
+                progress_callback(1.0, "ready", 0.0)
 
             log.info(f"Embedding model loaded: {self.model_name}")
 

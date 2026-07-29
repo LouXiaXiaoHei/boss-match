@@ -206,6 +206,66 @@ body {
     margin-bottom: 24px;
 }
 
+/* ---- Embedder Model Card (login page) ---- */
+
+.embedder-card {
+    padding: 16px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+}
+
+.embedder-card.embedder-idle {
+    background: #1a1d24;
+    border: 1px solid #232730;
+}
+
+.embedder-card.embedder-downloading {
+    background: #16191f;
+    border: 1px solid #232730;
+}
+
+.embedder-card.embedder-ready {
+    background: #1a2a1f;
+    border: 1px solid #2a4530;
+}
+
+.embedder-card.embedder-failed {
+    background: #2a1a1a;
+    border: 1px solid #453030;
+}
+
+.embedder-label {
+    font-size: 14px;
+    color: #4a9eff;
+    font-weight: 500;
+}
+
+.embedder-detail {
+    font-size: 13px;
+    color: #8b92a0;
+    margin-top: 4px;
+}
+
+.embedder-card.embedder-ready .embedder-detail {
+    color: #4caf50;
+}
+
+.embedder-card.embedder-failed .embedder-detail {
+    color: #ef5350;
+}
+
+.embedder-card .download-speed {
+    color: #4a9eff;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.embedder-card .btn-sm {
+    margin-top: 8px;
+    padding: 4px 12px;
+    font-size: 12px;
+}
+
 .chrome-status {
     display: flex;
     align-items: center;
@@ -1118,6 +1178,12 @@ body {
     font-size: 13px;
     color: #8b92a0;
     margin-top: 4px;
+}
+
+.model-download-card .download-speed {
+    color: #4a9eff;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
 }
 
 /* ---- Job Evidence (in match result card) ---- */

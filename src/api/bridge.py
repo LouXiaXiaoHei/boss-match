@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from datetime import datetime
 
 from src.db.database import Database
@@ -9,6 +10,7 @@ from src.db.repository import Repository
 from src.core.chrome import setup_chrome, stop_chrome, is_cdp_ready
 from src.core.login import check_login_state, wait_for_login
 from src.core.constants import GEEK_CDP_PORT, BOSS_CDP_PORT
+from src.ai.embedder import Embedder
 from src.api.geek_api import GeekAPI
 
 log = logging.getLogger(__name__)
@@ -23,6 +25,7 @@ MATCH_EVENT_TYPES = {
     "summary_chunk", "summary_done",
     "match_completed", "error", "cancelled",
     "match",  # backward compat
+    "embedder_init",  # standalone embedder init events
 }
 
 
@@ -33,6 +36,9 @@ class AppAPI:
         self._identity = "geek"
         self._window = None
         self._geek_api = None
+        self._embedder = Embedder()
+        self._embedder_status = "idle"  # idle, downloading, ready, failed
+        self._embedder_error = ""
 
     # ---- Identity ----
 
@@ -51,6 +57,52 @@ class AppAPI:
             "version": "0.1.0",
             "db_path": self.db.db_path,
         }
+
+    # ---- Embedder ----
+
+    def init_embedder(self):
+        """Start embedding model download in background. Returns immediately."""
+        log.info(f"init_embedder called, current status={self._embedder_status}")
+        if self._embedder_status in ("downloading", "ready"):
+            return {"ok": True, "data": {"status": self._embedder_status}}
+
+        self._embedder_status = "downloading"
+        self._embedder_error = ""
+
+        def _download():
+            try:
+                def progress_callback(progress, status, speed=0.0):
+                    self._notify_frontend(json.dumps({
+                        "type": "embedder_init",
+                        "status": "downloading",
+                        "progress": progress,
+                        "speed": speed,
+                    }))
+
+                self._embedder.ensure_model(progress_callback)
+                self._embedder_status = "ready"
+                log.info("Embedder model ready")
+                self._notify_frontend(json.dumps({
+                    "type": "embedder_init",
+                    "status": "ready",
+                    "progress": 1.0,
+                }))
+            except Exception as e:
+                self._embedder_status = "failed"
+                self._embedder_error = str(e)
+                log.exception("Embedder init failed")
+                self._notify_frontend(json.dumps({
+                    "type": "embedder_init",
+                    "status": "failed",
+                    "error": str(e),
+                }))
+
+        threading.Thread(target=_download, daemon=True).start()
+        return {"ok": True, "data": {"status": "downloading"}}
+
+    def get_embedder_status(self):
+        """Return current embedder download status."""
+        return {"ok": True, "data": {"status": self._embedder_status, "error": self._embedder_error}}
 
     # ---- Chrome ----
 
@@ -259,7 +311,8 @@ class AppAPI:
 
     def _get_geek_api(self):
         if self._geek_api is None:
-            self._geek_api = GeekAPI(self.repo, notify_callback=self._notify_frontend)
+            self._geek_api = GeekAPI(self.repo, notify_callback=self._notify_frontend,
+                                     embedder=self._embedder)
         return self._geek_api
 
     def _notify_frontend(self, payload_json: str):

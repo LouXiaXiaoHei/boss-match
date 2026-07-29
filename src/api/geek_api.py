@@ -39,12 +39,13 @@ class ScrapeTask:
 class GeekAPI:
     """Orchestrates geek-side scraping with thread safety and progress tracking."""
 
-    def __init__(self, repo: Repository, notify_callback: Callable | None = None):
+    def __init__(self, repo: Repository, notify_callback: Callable | None = None,
+                 embedder=None):
         self.repo = repo
         self._notify = notify_callback
         self._lock = threading.Lock()
         self._current_task: ScrapeTask | None = None
-        self._matcher = Matcher(repo, notify_callback=notify_callback)
+        self._matcher = Matcher(repo, notify_callback=notify_callback, embedder=embedder)
 
     # ---- Public API (called from bridge.py on main thread) ----
 

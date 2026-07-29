@@ -4,6 +4,14 @@
     let currentIdentity = 'geek';
     let chromeStatus = { running: false, logged_in: false };
 
+    // Embedder model state
+    let embedderState = {
+        status: 'idle',   // idle, downloading, ready, failed
+        progress: 0,
+        speed: 0,
+        error: '',
+    };
+
     // Search page state
     let searchState = {
         keyword: '',
@@ -29,6 +37,7 @@
         resumeDirty: false,
         vditor: null,
         selectedJobIds: new Set(),
+        _silenceInput: false,
         matchProgress: null,
         pollTimer: null,
         results: [],
@@ -59,6 +68,37 @@
 
     // ---- Page Renderers ----
 
+    function renderEmbedderCard() {
+        const es = embedderState;
+        if (es.status === 'idle') {
+            return `<div class="embedder-card embedder-idle">
+                <div class="embedder-label">嵌入模型</div>
+                <div class="embedder-detail">等待下载...</div>
+            </div>`;
+        }
+        if (es.status === 'downloading') {
+            const pct = Math.round(es.progress * 100);
+            const speedText = es.speed > 0 ? ` · <span class="download-speed">${es.speed.toFixed(1)} MB/s</span>` : '';
+            return `<div class="embedder-card embedder-downloading">
+                <div class="embedder-label">下载嵌入模型</div>
+                <div class="embedder-detail">${pct}%${speedText}</div>
+                <div class="progress-bar-track"><div class="progress-bar-fill" style="width: ${pct}%"></div></div>
+            </div>`;
+        }
+        if (es.status === 'ready') {
+            return `<div class="embedder-card embedder-ready">
+                <div class="embedder-label">嵌入模型</div>
+                <div class="embedder-detail">已就绪</div>
+            </div>`;
+        }
+        // failed
+        return `<div class="embedder-card embedder-failed">
+            <div class="embedder-label">嵌入模型</div>
+            <div class="embedder-detail">下载失败: ${es.error || '未知错误'}</div>
+            <button class="btn btn-warning btn-sm" id="btn-retry-embedder">重试</button>
+        </div>`;
+    }
+
     function renderLoginPage() {
         const identity = currentIdentity;
         const identityLabel = identity === 'geek' ? '求职者' : '招聘者';
@@ -86,6 +126,8 @@
             <div class="login-card">
                 <h2>${identityLabel} — Chrome 登录管理</h2>
                 <p class="login-desc">启动专用 Chrome 浏览器，登录 BOSS直聘后即可开始使用</p>
+
+                ${renderEmbedderCard()}
 
                 <div class="chrome-status ${statusClass}">
                     <span class="status-icon">${statusIcon}</span>
@@ -729,10 +771,16 @@
             ],
             after: () => {
                 if (matchState.resume) {
+                    matchState._silenceInput = true;
                     matchState.vditor.setValue(matchState.resume);
+                    matchState._silenceInput = false;
+                    // Resume is already loaded from backend, not dirty
+                    matchState.resumeLoaded = true;
+                    matchState.resumeDirty = false;
                 }
             },
             input: () => {
+                if (matchState._silenceInput) return;
                 matchState.resume = matchState.vditor.getValue();
                 matchState.resumeDirty = true;
                 const saveBtn = document.getElementById('btn-save-resume');
@@ -759,9 +807,10 @@
         // Model download progress
         if (matchState.modelDownloadStatus) {
             const ds = matchState.modelDownloadStatus;
+            const speedText = ds.speed > 0 ? `${ds.speed.toFixed(1)} MB/s` : '';
             html += `<div class="model-download-card">
                 <div class="phase-label">下载嵌入模型</div>
-                <div class="phase-detail">${ds.status || '准备中...'}</div>
+                <div class="phase-detail">${ds.status || '准备中...'}${speedText ? ' · <span class="download-speed">' + speedText + '</span>' : ''}</div>
                 <div class="progress-bar-track"><div class="progress-bar-fill" style="width: ${Math.round((ds.progress || 0) * 100)}%"></div></div>
             </div>`;
         }
@@ -783,6 +832,8 @@
             html += `<div class="match-status-card cancelled"><div class="status-text">匹配已取消</div></div>`;
         } else if (phase === 'failed') {
             html += `<div class="match-status-card error"><div class="status-text">匹配失败</div></div>`;
+        } else if (phase === 'completed') {
+            html += `<div class="match-status-card completed"><div class="status-text">匹配完成</div></div>`;
         }
 
         // Match results from DB (completed matches)
@@ -859,6 +910,14 @@
 
         document.getElementById('btn-go-search')?.addEventListener('click', () => {
             navigateTo('search');
+        });
+
+        document.getElementById('btn-retry-embedder')?.addEventListener('click', () => {
+            embedderState.status = 'idle';
+            embedderState.error = '';
+            api.initEmbedder();
+            embedderState.status = 'downloading';
+            renderPage();
         });
 
         // Search page buttons
@@ -1024,9 +1083,18 @@
                 if (result?.ok) {
                     const content = result.data.content;
                     matchState.resume = content;
-                    matchState.resumeDirty = true;
+                    // Auto-save uploaded resume
+                    const saveResult = await api.saveResume(content);
+                    if (saveResult?.ok) {
+                        matchState.resumeLoaded = true;
+                        matchState.resumeDirty = false;
+                    } else {
+                        matchState.resumeDirty = true;
+                    }
                     if (matchState.vditor) {
+                        matchState._silenceInput = true;
                         matchState.vditor.setValue(content);
+                        matchState._silenceInput = false;
                     }
                     if (statusEl) {
                         statusEl.textContent = `${file.name} 解析成功`;
@@ -1034,13 +1102,19 @@
                     }
                     const saveBtn = document.getElementById('btn-save-resume');
                     if (saveBtn) {
-                        saveBtn.disabled = false;
-                        saveBtn.textContent = '保存简历';
+                        saveBtn.disabled = !matchState.resumeDirty;
+                        saveBtn.textContent = matchState.resumeDirty ? '保存简历' : '已保存';
                     }
                     const resumeStatusEl = document.querySelector('.resume-status');
                     if (resumeStatusEl) {
-                        resumeStatusEl.className = 'resume-status dirty';
-                        resumeStatusEl.textContent = '未保存更改';
+                        resumeStatusEl.className = matchState.resumeDirty ? 'resume-status dirty' : 'resume-status saved';
+                        resumeStatusEl.textContent = matchState.resumeDirty ? '未保存更改' : '已保存';
+                    }
+                    // Update match button state
+                    const matchBtn = document.getElementById('btn-start-match');
+                    if (matchBtn) {
+                        const canMatch = matchState.resumeLoaded && !matchState.resumeDirty && matchState.selectedJobIds.size > 0;
+                        matchBtn.disabled = !canMatch;
                     }
                 } else {
                     if (statusEl) {
@@ -1273,8 +1347,24 @@
         // Phase complete, keep phase name for display
     }
 
+    function handleEmbedderInit(evt) {
+        embedderState.status = evt.status || 'idle';
+        if (evt.status === 'downloading') {
+            embedderState.progress = evt.progress || 0;
+            embedderState.speed = evt.speed || 0;
+        } else if (evt.status === 'ready') {
+            embedderState.progress = 1.0;
+            embedderState.speed = 0;
+        } else if (evt.status === 'failed') {
+            embedderState.error = evt.error || '';
+        }
+        if (currentPage === 'login') {
+            renderPage();
+        }
+    }
+
     function handleModelDownload(evt) {
-        matchState.modelDownloadStatus = { progress: evt.progress, status: evt.status };
+        matchState.modelDownloadStatus = { progress: evt.progress, status: evt.status, speed: evt.speed || 0 };
         updateMatchDynamicArea();
     }
 
@@ -1513,17 +1603,18 @@
     window.__onMatchProgress = function(evt) {
         if (!evt) return;
         switch (evt.type) {
-            case 'phase_start':      handlePhaseStart(evt); break;
-            case 'phase_progress':   handlePhaseProgress(evt); break;
-            case 'phase_done':       handlePhaseDone(evt); break;
+            case 'embedder_init':        handleEmbedderInit(evt); break;
+            case 'phase_start':          handlePhaseStart(evt); break;
+            case 'phase_progress':       handlePhaseProgress(evt); break;
+            case 'phase_done':           handlePhaseDone(evt); break;
             case 'model_download_progress': handleModelDownload(evt); break;
-            case 'job_scored':       handleJobScored(evt); break;
-            case 'job_failed':       handleJobFailed(evt); break;
-            case 'summary_chunk':    handleSummaryChunk(evt); break;
-            case 'summary_done':     handleSummaryDone(evt); break;
-            case 'match_completed':  handleMatchCompleted(evt); break;
-            case 'cancelled':        handleCancelled(evt); break;
-            case 'error':            handleMatchError(evt); break;
+            case 'job_scored':           handleJobScored(evt); break;
+            case 'job_failed':           handleJobFailed(evt); break;
+            case 'summary_chunk':        handleSummaryChunk(evt); break;
+            case 'summary_done':         handleSummaryDone(evt); break;
+            case 'match_completed':      handleMatchCompleted(evt); break;
+            case 'cancelled':            handleCancelled(evt); break;
+            case 'error':                handleMatchError(evt); break;
             default:
                 // Backward compat for old format
                 if (evt.type === 'match' || evt.status) {
@@ -1564,6 +1655,18 @@
     // Wait for pywebview ready, then init
     await api.waitForPyWebview();
     await refreshState();
+
+    // Check embedder status and start download if needed
+    const embedderRes = await api.getEmbedderStatus();
+    if (embedderRes && embedderRes.ok && embedderRes.data) {
+        embedderState.status = embedderRes.data.status || 'idle';
+        embedderState.error = embedderRes.data.error || '';
+        if (embedderState.status === 'idle') {
+            api.initEmbedder();
+            embedderState.status = 'downloading';
+        }
+    }
+
     renderPage();
 
     console.log('BossMatch UI initialized');

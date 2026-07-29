@@ -28,6 +28,14 @@ htmlcov/
 .tox/
 .nox/
 
+# AI-generated markdown and tooling
+SKILL.md
+.agents/
+.playwright-mcp/
+
+# Test files
+tests/
+
 # Project-generated local files
 docs/
 
@@ -45,3 +53,4 @@ Thumbs.db
 !AGENTS.md
 
 ./zcode
+*.log

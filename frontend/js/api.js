@@ -4,7 +4,7 @@ const api = {
 
     async waitForPyWebview() {
         if (this._ready) return;
-        while (typeof pywebview === 'undefined' || !pywebview.api) {
+        while (typeof pywebview === 'undefined' || !pywebview.api || Object.keys(pywebview.api).length === 0) {
             await new Promise(r => setTimeout(r, 50));
         }
         this._ready = true;
@@ -24,6 +24,10 @@ const api = {
     getIdentity() { return this.call('get_identity'); },
     switchIdentity(mode) { return this.call('switch_identity', mode); },
     getAppState() { return this.call('get_app_state'); },
+
+    // Embedder
+    initEmbedder() { return this.call('init_embedder'); },
+    getEmbedderStatus() { return this.call('get_embedder_status'); },
 
     // Chrome
     setupChrome(identity) { return this.call('setup_chrome', identity); },
