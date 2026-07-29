@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BossMatch</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://unpkg.com/vditor@3.10.5/dist/index.css" />
+</head>
+<body>
+    <div id="app">
+        <aside class="sidebar">
+            <div class="logo">BossMatch</div>
+            <nav class="nav">
+                <a href="#login" class="nav-item active" data-page="login">登录</a>
+                <a href="#search" class="nav-item" data-page="search">搜索</a>
+                <a href="#matches" class="nav-item" data-page="matches">匹配</a>
+                <a href="#summary" class="nav-item" data-page="summary">摘要</a>
+                <a href="#settings" class="nav-item" data-page="settings">设置</a>
+            </nav>
+            <div class="nav-divider"></div>
+            <nav class="nav">
+                <a href="#chat" class="nav-item disabled" title="Coming Soon">智能聊天</a>
+                <a href="#resume" class="nav-item disabled" title="Coming Soon">简历优化</a>
+                <a href="#interview" class="nav-item disabled" title="Coming Soon">面试准备</a>
+                <a href="#salary" class="nav-item disabled" title="Coming Soon">薪资谈判</a>
+            </nav>
+        </aside>
+        <main class="main">
+            <header class="topbar">
+                <div class="identity-switch">
+                    <button class="identity-btn active" data-mode="geek">求职者</button>
+                    <button class="identity-btn" data-mode="boss">招聘者</button>
+                </div>
+                <div class="version">v0.1.0</div>
+            </header>
+            <div id="content" class="content">
+                <!-- Pages rendered dynamically by app.js -->
+            </div>
+        </main>
+    </div>
+    <script src="https://unpkg.com/vditor@3.10.5/dist/index.min.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
