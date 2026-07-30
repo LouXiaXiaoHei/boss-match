@@ -61,41 +61,47 @@ class VectorStore:
                 meta = {"source": c.source, "section": c.section}
                 if c.job_id:
                     meta["job_id"] = c.job_id
+                if c.resume_id:
+                    meta["resume_id"] = c.resume_id
                 meta.update(c.metadata)
                 metas.append(meta)
             col.upsert(ids=ids, documents=docs, embeddings=embs, metadatas=metas)
 
     def query(self, query_embedding: list[float], source: str = None,
-              top_k: int = 5) -> list[RetrievalResult]:
+              top_k: int = 5, resume_id: str = None) -> list[RetrievalResult]:
         """Query a single collection."""
         if source:
             cols = [self._col(source)]
         else:
             cols = [self._resume_col, self._supplement_col, self._jobs_col]
-        return self._query_multi(query_embedding, cols, top_k)
+        return self._query_multi(query_embedding, cols, top_k, resume_id=resume_id)
 
     def query_multi(self, query_embedding: list[float],
                     sources: list[str] = None,
-                    top_k: int = 5) -> list[RetrievalResult]:
+                    top_k: int = 5, resume_id: str = None) -> list[RetrievalResult]:
         """Query multiple collections, merge and rank by score."""
         if sources:
             cols = [self._col(s) for s in sources]
         else:
             cols = [self._resume_col, self._supplement_col]
-        return self._query_multi(query_embedding, cols, top_k)
+        return self._query_multi(query_embedding, cols, top_k, resume_id=resume_id)
 
     def _query_multi(self, query_embedding: list[float],
-                     cols: list, top_k: int = 5) -> list[RetrievalResult]:
+                     cols: list, top_k: int = 5,
+                     resume_id: str = None) -> list[RetrievalResult]:
         all_results = []
         for col in cols:
             if col.count() == 0:
                 continue
             try:
-                r = col.query(
-                    query_embeddings=[query_embedding],
-                    n_results=min(top_k, col.count()),
-                    include=["documents", "metadatas", "distances"],
-                )
+                kwargs = {
+                    "query_embeddings": [query_embedding],
+                    "n_results": min(top_k, col.count()),
+                    "include": ["documents", "metadatas", "distances"],
+                }
+                if resume_id:
+                    kwargs["where"] = {"resume_id": resume_id}
+                r = col.query(**kwargs)
                 for i in range(len(r["ids"][0])):
                     meta = r["metadatas"][0][i] or {}
                     # ChromaDB cosine distance: 0 = identical, 2 = opposite
@@ -139,6 +145,13 @@ class VectorStore:
         except Exception as e:
             log.warning(f"Get job chunks failed: {e}")
             return []
+
+    def clear_resume(self, resume_id: str):
+        """Delete all resume chunks for a specific resume_id."""
+        try:
+            self._resume_col.delete(where={"resume_id": str(resume_id)})
+        except Exception as e:
+            log.warning(f"Clear resume chunks failed: {e}")
 
     def clear_jobs(self):
         """Clear jobs collection before each match."""

@@ -322,7 +322,8 @@ class GeekAPI:
 
     # ---- Match Methods ----
 
-    def start_match(self, resume: str, job_ids: list, supplements: list = None) -> dict:
+    def start_match(self, resume: str, job_ids: list, supplements: list = None,
+                    resume_id: int = None) -> dict:
         """Start matching selected jobs against the given resume."""
         if not job_ids:
             return {"ok": False, "error": "请选择至少一个职位"}
@@ -330,11 +331,11 @@ class GeekAPI:
         if not resume.strip():
             return {"ok": False, "error": "请先保存简历"}
 
-        return self._matcher.start_match(resume, job_ids, supplements)
+        return self._matcher.start_match(resume, job_ids, supplements, resume_id=resume_id)
 
-    def get_match_summary(self) -> dict:
+    def get_match_summary(self, source_id: int = 1) -> dict:
         """Return the latest match summary."""
-        row = self.repo.get_match_summary("geek", source_id=1)
+        row = self.repo.get_match_summary("geek", source_id=source_id)
         if not row:
             return {"ok": True, "data": {"summary": None}}
         return {"ok": True, "data": {"summary": row}}

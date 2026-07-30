@@ -55,10 +55,17 @@ const api = {
     getFilterOptions() { return this.call('get_filter_options'); },
     cancelScrape() { return this.call('cancel_scrape'); },
 
+    // AI Search Orchestration
+    inferSearchConditions(resumeId) { return this.call('infer_search_conditions', resumeId ? String(resumeId) : 'null'); },
+
     // Resume
     saveResume(content) { return this.call('save_resume', content); },
     getResume() { return this.call('get_resume'); },
     uploadResume(filename, base64Content) { return this.call('upload_resume', filename, base64Content); },
+    listResumes() { return this.call('list_resumes'); },
+    getResumeById(id) { return this.call('get_resume_by_id', String(id)); },
+    deleteResume(id) { return this.call('delete_resume', String(id)); },
+    setActiveResume(id) { return this.call('set_active_resume', String(id)); },
 
     // Match
     startMatch(jobIds, supplements) {
@@ -73,4 +80,17 @@ const api = {
     uploadSupplement(filename, base64Content) {
         return this.call('upload_supplement', filename, base64Content);
     },
+
+    // Pipeline
+    startPipeline(resumeId, keyword, city, maxPages, filters, minScore, supplements) {
+        return this.call('start_pipeline',
+            resumeId ? String(resumeId) : 'null',
+            keyword || '', city || '',
+            String(maxPages || 3),
+            JSON.stringify(filters || {}),
+            String(minScore || 0),
+            JSON.stringify(supplements || []));
+    },
+    getPipelineProgress() { return this.call('get_pipeline_progress'); },
+    cancelPipeline() { return this.call('cancel_pipeline'); },
 };

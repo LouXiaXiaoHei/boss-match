@@ -28,16 +28,18 @@
         resultLimit: 50,
         selectedJob: null,
         detailData: null,
+        aiSuggestion: null,
+        aiSuggestionLoading: false,
+        // Pipeline state
+        pipelineRunning: false,
+        pipelineProgress: null,
+        pipelinePollTimer: null,
+        pipelineMinScore: 0.4,
     };
 
     // Match page state
     let matchState = {
-        resume: '',
-        resumeLoaded: false,
-        resumeDirty: false,
-        vditor: null,
         selectedJobIds: new Set(),
-        _silenceInput: false,
         matchProgress: null,
         pollTimer: null,
         results: [],
@@ -47,13 +49,24 @@
         expandedJobId: null,
         availableJobs: [],
         availableJobsLoaded: false,
-        supplements: [],         // [{filename, content}] uploaded supplement texts
-        phase: 'idle',          // current RAG phase: idle, init_model, build_index, job_scoring, summary, completed, failed, cancelled
-        phaseProgress: null,    // {current, total} for current phase
-        modelDownloadStatus: null,  // {progress, status}
-        streamedJobs: [],       // jobs scored during this match session (from job_scored events)
-        summaryBuffer: '',      // accumulated summary stream text
-        summaryStructured: null, // parsed structured summary JSON
+        supplements: [],
+        phase: 'idle',
+        phaseProgress: null,
+        modelDownloadStatus: null,
+        streamedJobs: [],
+        summaryBuffer: '',
+        summaryStructured: null,
+    };
+
+    // Resume management page state
+    let resumePageState = {
+        resumes: [],
+        editingId: null,
+        vditor: null,
+        content: '',
+        contentDirty: false,
+        _silenceInput: false,
+        supplements: [],
     };
 
     // ---- Utility ----
@@ -207,21 +220,179 @@
                     </div>
                     <div class="search-actions">
                         <button class="btn btn-primary" id="btn-start-search"
-                                ${isScraping ? 'disabled' : ''}>
+                                ${isScraping || searchState.pipelineRunning ? 'disabled' : ''}>
                             ${isScraping ? '抓取中...' : '开始搜索'}
+                        </button>
+                        <button class="btn btn-accent" id="btn-start-pipeline"
+                                ${isScraping || searchState.pipelineRunning ? 'disabled' : ''}>
+                            ${searchState.pipelineRunning ? '一体化进行中...' : '一体化搜索+匹配'}
                         </button>
                         ${isScraping ? `
                         <button class="btn btn-danger" id="btn-cancel-scrape">
                             取消抓取
                         </button>` : ''}
+                        ${searchState.pipelineRunning ? `
+                        <button class="btn btn-danger" id="btn-cancel-pipeline">
+                            取消流水线
+                        </button>` : ''}
+                    </div>
+                    <div class="pipeline-options">
+                        <div class="pipeline-option-item">
+                            <label>最低匹配分</label>
+                            <div class="score-slider-wrap">
+                                <input type="range" id="pipeline-min-score"
+                                       min="0" max="100" step="5"
+                                       value="${Math.round(searchState.pipelineMinScore * 100)}"
+                                       ${searchState.pipelineRunning ? 'disabled' : ''}>
+                                <span class="score-slider-value">${Math.round(searchState.pipelineMinScore * 100)}%</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
+
+            ${renderAiSuggestionCard()}
+
+            ${searchState.pipelineRunning ? renderPipelineProgress() : ''}
 
             ${isScraping ? renderProgressIndicator(progress) : ''}
             ${hasResults ? renderResultsArea(isScraping) : ''}
         </div>
         ${searchState.selectedJob ? renderDetailPopup() : ''}`;
+    }
+
+    function renderAiSuggestionCard() {
+        const ss = searchState;
+        if (ss.aiSuggestionLoading) {
+            return `
+            <div class="ai-suggestion-card loading">
+                <div class="ai-suggestion-header">
+                    <span class="ai-suggestion-icon">AI</span>
+                    <span class="ai-suggestion-title">智能推荐搜索条件</span>
+                </div>
+                <div class="ai-suggestion-body">
+                    <div class="ai-loading-dots">正在分析简历...</div>
+                </div>
+            </div>`;
+        }
+        if (ss.aiSuggestion && ss.aiSuggestion.ok) {
+            const s = ss.aiSuggestion;
+            const tags = [];
+            if (s.keywords) tags.push({ label: '关键词', value: s.keywords });
+            if (s.city) tags.push({ label: '城市', value: s.city });
+            // Reverse lookup for display labels
+            const fo = ss.filterOptions;
+            if (s.salary && fo) {
+                const label = Object.entries(fo.salary || {}).find(([_, v]) => v === s.salary)?.[0];
+                if (label) tags.push({ label: '薪资', value: label });
+            }
+            if (s.experience && fo) {
+                const label = Object.entries(fo.experience || {}).find(([_, v]) => v === s.experience)?.[0];
+                if (label) tags.push({ label: '经验', value: label });
+            }
+            if (s.degree && fo) {
+                const label = Object.entries(fo.degree || {}).find(([_, v]) => v === s.degree)?.[0];
+                if (label) tags.push({ label: '学历', value: label });
+            }
+            if (s.scale && fo) {
+                const label = Object.entries(fo.scale || {}).find(([_, v]) => v === s.scale)?.[0];
+                if (label) tags.push({ label: '规模', value: label });
+            }
+            if (s.stage && fo) {
+                const label = Object.entries(fo.stage || {}).find(([_, v]) => v === s.stage)?.[0];
+                if (label) tags.push({ label: '融资', value: label });
+            }
+            return `
+            <div class="ai-suggestion-card">
+                <div class="ai-suggestion-header">
+                    <span class="ai-suggestion-icon">AI</span>
+                    <span class="ai-suggestion-title">智能推荐搜索条件</span>
+                </div>
+                <div class="ai-suggestion-body">
+                    <div class="ai-suggestion-tags">
+                        ${tags.map(t => `<span class="ai-suggestion-item"><span class="ai-suggestion-label">${t.label}</span><span class="ai-suggestion-value">${t.value}</span></span>`).join('')}
+                    </div>
+                    ${s.reasoning ? `<div class="ai-suggestion-reasoning">${s.reasoning}</div>` : ''}
+                </div>
+                <div class="ai-suggestion-actions">
+                    <button class="btn btn-secondary btn-sm" id="btn-apply-ai-suggestion">应用推荐</button>
+                    <button class="btn btn-primary btn-sm" id="btn-search-ai-suggestion">使用推荐搜索</button>
+                </div>
+            </div>`;
+        }
+        if (ss.aiSuggestion && !ss.aiSuggestion.ok) {
+            return `
+            <div class="ai-suggestion-card error">
+                <div class="ai-suggestion-header">
+                    <span class="ai-suggestion-icon">AI</span>
+                    <span class="ai-suggestion-title">智能推荐</span>
+                </div>
+                <div class="ai-suggestion-body">
+                    <div class="ai-suggestion-error">${ss.aiSuggestion.error || '推断失败'}</div>
+                </div>
+            </div>`;
+        }
+        // Default: show trigger button
+        return `
+        <div class="ai-suggestion-card empty">
+            <div class="ai-suggestion-header">
+                <span class="ai-suggestion-icon">AI</span>
+                <span class="ai-suggestion-title">智能推荐搜索条件</span>
+            </div>
+            <div class="ai-suggestion-body">
+                <p class="ai-suggestion-hint">基于当前简历内容，AI 自动推断最适合的搜索条件</p>
+                <button class="btn btn-secondary btn-sm" id="btn-ai-suggest">获取 AI 推荐</button>
+            </div>
+        </div>`;
+    }
+
+    function renderPipelineProgress() {
+        const p = searchState.pipelineProgress;
+        if (!p) {
+            return `
+            <div class="pipeline-progress-card">
+                <div class="pipeline-phase-label">一体化流水线</div>
+                <div class="pipeline-phase-detail">启动中...</div>
+            </div>`;
+        }
+
+        const phase = p.phase === 'init' ? '初始化' :
+                      p.phase === 'scraping' ? '爬取中' :
+                      p.phase === 'scoring' ? '评分中' :
+                      p.phase === 'summary' ? '生成摘要' : p.phase;
+
+        const scrapePct = p.total_pages > 0
+            ? Math.round((p.current_page / p.total_pages) * 100) : 0;
+        const scorePct = p.jobs_found > 0
+            ? Math.round((p.jobs_scored / p.jobs_found) * 100) : 0;
+
+        return `
+        <div class="pipeline-progress-card">
+            <div class="pipeline-header">
+                <span class="pipeline-phase-label">一体化流水线 — ${phase}</span>
+                <span class="pipeline-stats">
+                    发现 ${p.jobs_found} 个职位 · 已评分 ${p.jobs_scored}
+                    ${p.details_skipped ? ` · 跳过 ${p.details_skipped} 条缓存` : ''}
+                    ${p.jobs_skipped ? ` · 跳过 ${p.jobs_skipped} 条已评` : ''}
+                </span>
+            </div>
+            <div class="pipeline-bars">
+                <div class="pipeline-bar-row">
+                    <span class="pipeline-bar-label">爬取</span>
+                    <div class="progress-bar-track flex-1">
+                        <div class="progress-bar-fill" style="width: ${scrapePct}%"></div>
+                    </div>
+                    <span class="pipeline-bar-pct">${p.current_page}/${p.total_pages}页</span>
+                </div>
+                <div class="pipeline-bar-row">
+                    <span class="pipeline-bar-label">评分</span>
+                    <div class="progress-bar-track flex-1">
+                        <div class="progress-bar-fill scoring" style="width: ${scorePct}%"></div>
+                    </div>
+                    <span class="pipeline-bar-pct">${p.jobs_scored}/${p.jobs_found}</span>
+                </div>
+            </div>
+        </div>`;
     }
 
     function renderFilterDropdowns() {
@@ -376,54 +547,11 @@
         const progress = matchState.matchProgress;
         const isMatching = matchState.phase !== 'idle' && matchState.phase !== 'completed' && matchState.phase !== 'cancelled' && matchState.phase !== 'failed';
         const hasResults = matchState.results.length > 0;
-        const resumeStatus = !matchState.resume.trim()
-            ? '<span class="resume-status empty">请先填写简历</span>'
-            : matchState.resumeDirty
-            ? '<span class="resume-status dirty">未保存更改</span>'
-            : matchState.resumeLoaded
-            ? '<span class="resume-status saved">已保存</span>'
-            : '';
         const selectedCount = matchState.selectedJobIds.size;
-        const canMatch = matchState.resumeLoaded && !matchState.resumeDirty && selectedCount > 0 && !isMatching;
+        const canMatch = selectedCount > 0 && !isMatching;
 
         return `
         <div class="match-page">
-            <div class="resume-section">
-                <h3>我的简历</h3>
-                <div class="resume-upload-area">
-                    <button class="btn btn-secondary btn-sm" id="btn-upload-resume">上传简历文件</button>
-                    <span class="upload-hint">支持 PDF、DOCX、TXT、MD 格式</span>
-                    <input type="file" id="resume-file-input" accept=".pdf,.docx,.doc,.txt,.md" style="display:none">
-                    <span class="upload-status" id="upload-status"></span>
-                </div>
-                <div id="vditor" class="resume-editor"></div>
-                <div class="resume-actions">
-                    <button class="btn btn-primary btn-sm" id="btn-save-resume"
-                            ${!matchState.resumeDirty && matchState.resumeLoaded ? 'disabled' : ''}>
-                        ${matchState.resumeLoaded && !matchState.resumeDirty ? '已保存' : '保存简历'}
-                    </button>
-                    ${resumeStatus}
-                </div>
-            </div>
-
-            <div class="supplement-section">
-                <h3>补充材料（可选）</h3>
-                <div class="supplement-upload-area">
-                    <button class="btn btn-secondary btn-sm" id="btn-upload-supplement">上传补充材料</button>
-                    <span class="upload-hint">上传面试经验、目标公司资料等，增强匹配依据</span>
-                    <input type="file" id="supplement-file-input" accept=".pdf,.docx,.txt,.md" style="display:none">
-                    <span class="upload-status" id="supplement-upload-status"></span>
-                </div>
-                <div class="supplement-list" id="supplement-list">
-                    ${matchState.supplements.map((s, i) => `
-                        <div class="supplement-item">
-                            <span>${s.filename}</span>
-                            <button class="btn-remove" data-remove-supplement="${i}">&times;</button>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-
             <div class="job-select-section">
                 <h3>选择职位 <span class="select-count">已选 ${selectedCount} 个</span></h3>
                 <div class="job-select-actions">
@@ -538,15 +666,70 @@
         </div>`;
     }
 
+    // Summary page state
+    let summaryState = {
+        summary: null,
+        loading: false,
+    };
+
     function renderSummaryPage() {
-        return `
+        if (summaryState.loading) {
+            return `
+            <div class="page">
+                <h2>综合摘要</h2>
+                <p class="page-desc">AI 求职分析报告</p>
+                <div class="coming-soon-box">
+                    <p>加载中...</p>
+                </div>
+            </div>`;
+        }
+        if (!summaryState.summary) {
+            return `
+            <div class="page">
+                <h2>综合摘要</h2>
+                <p class="page-desc">AI 求职分析报告</p>
+                <div class="coming-soon-box">
+                    <p>暂无摘要，请先完成一次匹配</p>
+                </div>
+            </div>`;
+        }
+        const s = summaryState.summary;
+        const structured = s.structured;
+        const rawText = s.raw_text || '';
+        const createdAt = s.created_at || '';
+
+        let html = `
         <div class="page">
-            <h2>市场摘要</h2>
-            <p class="page-desc">职位市场数据概览</p>
-            <div class="coming-soon-box">
-                <p>摘要功能将在后续阶段实现</p>
-            </div>
+            <h2>综合摘要</h2>
+            <p class="page-desc">AI 求职分析报告${createdAt ? ' · ' + createdAt : ''}</p>
+            <div id="summary-content"></div>
         </div>`;
+        return html;
+    }
+
+    async function initSummaryPage() {
+        summaryState.loading = true;
+        renderPage();
+        const result = await api.getMatchSummary();
+        summaryState.loading = false;
+        if (result?.ok && result.data?.summary) {
+            summaryState.summary = result.data.summary;
+        } else {
+            summaryState.summary = null;
+        }
+        renderPage();
+        // After renderPage, insert structured summary via DOM
+        if (summaryState.summary) {
+            const container = document.getElementById('summary-content');
+            if (container) {
+                const structured = summaryState.summary.structured;
+                if (structured) {
+                    container.replaceWith(renderStructuredSummaryEl(structured));
+                } else if (summaryState.summary.raw_text) {
+                    container.innerHTML = `<div class="summary-stream">${summaryState.summary.raw_text}</div>`;
+                }
+            }
+        }
     }
 
     function renderSettingsPage() {
@@ -572,8 +755,82 @@
         </div>`;
     }
 
+    function renderResumesPage() {
+        const rps = resumePageState;
+        const isEditing = rps.editingId !== null;
+        const resumeCards = rps.resumes.map(r => {
+            const isActive = r.is_active ? 'active' : '';
+            const chunkInfo = r.chunk_count > 0 ? `已向量化 (${r.chunk_count}段)` : '未向量化';
+            const summary = r.summary ? (r.summary.length > 80 ? r.summary.slice(0, 80) + '...' : r.summary) : '空简历';
+            return `
+            <div class="resume-card ${isActive}" data-resume-id="${r.id}">
+                <div class="resume-card-header">
+                    <span class="resume-card-name">${r.name || '未命名'}</span>
+                    ${r.is_active ? '<span class="resume-active-badge">当前</span>' : ''}
+                </div>
+                <div class="resume-card-summary">${summary}</div>
+                <div class="resume-card-meta">
+                    <span class="resume-chunk-status">${chunkInfo}</span>
+                    <span class="resume-updated">${r.updated_at || ''}</span>
+                </div>
+                <div class="resume-card-actions">
+                    <button class="btn btn-secondary btn-xs" data-edit-resume="${r.id}">编辑</button>
+                    ${!r.is_active ? `<button class="btn btn-secondary btn-xs" data-set-active="${r.id}">设为当前</button>` : ''}
+                    <button class="btn btn-danger btn-xs" data-delete-resume="${r.id}">删除</button>
+                </div>
+            </div>`;
+        }).join('');
+
+        return `
+        <div class="resume-page">
+            <h2>简历管理</h2>
+            <div class="resume-card-grid">
+                ${resumeCards}
+                <div class="resume-card resume-card-add" id="btn-add-resume">
+                    <div class="resume-card-add-icon">+</div>
+                    <div class="resume-card-add-text">上传简历</div>
+                    <input type="file" id="resume-file-input" accept=".pdf,.docx,.doc,.txt,.md" style="display:none">
+                </div>
+            </div>
+            ${isEditing ? `
+            <div class="resume-editor-section">
+                <h3>编辑简历</h3>
+                <div id="vditor" class="resume-editor"></div>
+                <div class="resume-editor-actions">
+                    <button class="btn btn-primary btn-sm" id="btn-save-resume-edit"
+                            ${!rps.contentDirty ? 'disabled' : ''}>保存</button>
+                    <button class="btn btn-secondary btn-sm" id="btn-cancel-resume-edit">取消</button>
+                </div>
+                <div class="supplement-section">
+                    <h4>补充材料（可选）</h4>
+                    <div class="supplement-upload-area">
+                        <button class="btn btn-secondary btn-sm" id="btn-upload-supplement">上传补充材料</button>
+                        <input type="file" id="supplement-file-input" accept=".pdf,.docx,.txt,.md" style="display:none">
+                    </div>
+                    <div class="supplement-list" id="supplement-list">
+                        ${rps.supplements.map((s, i) => `
+                            <div class="supplement-item">
+                                <span>${s.filename}</span>
+                                <button class="btn-remove" data-remove-supplement="${i}">&times;</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>` : ''}
+        </div>`;
+    }
+
+    async function initResumesPage() {
+        const result = await api.listResumes();
+        if (result?.ok) {
+            resumePageState.resumes = result.data.resumes || [];
+        }
+        renderPage();
+    }
+
     const pageRenderers = {
         login: renderLoginPage,
+        resumes: renderResumesPage,
         search: renderSearchPage,
         matches: renderMatchesPage,
         summary: renderSummaryPage,
@@ -586,9 +843,9 @@
         const content = document.getElementById('content');
         const scrollTop = content.scrollTop;
 
-        if (matchState.vditor) {
-            try { matchState.vditor.destroy(); } catch(e) {}
-            matchState.vditor = null;
+        if (resumePageState.vditor) {
+            try { resumePageState.vditor.destroy(); } catch(e) {}
+            resumePageState.vditor = null;
         }
 
         const renderer = pageRenderers[currentPage];
@@ -597,8 +854,8 @@
             bindPageEvents();
         }
 
-        if (currentPage === 'matches') {
-            initVditor();
+        if (currentPage === 'resumes' && resumePageState.editingId !== null) {
+            initResumeVditor();
         }
 
         content.scrollTop = scrollTop;
@@ -668,6 +925,49 @@
         }
     }
 
+    function applyAiSuggestion() {
+        const s = searchState.aiSuggestion;
+        if (!s || !s.ok) return;
+        const fo = searchState.filterOptions;
+
+        if (s.keywords) {
+            const keywordInput = document.getElementById('search-keyword');
+            if (keywordInput) keywordInput.value = s.keywords;
+            searchState.keyword = s.keywords;
+        }
+        if (s.city) {
+            const cityInput = document.getElementById('search-city');
+            if (cityInput) cityInput.value = s.city;
+            searchState.city = s.city;
+        }
+        // Map API codes back to display labels for select dropdowns
+        if (s.salary && fo) {
+            const label = Object.entries(fo.salary || {}).find(([_, v]) => v === s.salary)?.[0];
+            const sel = document.getElementById('filter-salary');
+            if (sel && label) { sel.value = label; searchState.filters.salary = label; }
+        }
+        if (s.experience && fo) {
+            const label = Object.entries(fo.experience || {}).find(([_, v]) => v === s.experience)?.[0];
+            const sel = document.getElementById('filter-experience');
+            if (sel && label) { sel.value = label; searchState.filters.experience = label; }
+        }
+        if (s.degree && fo) {
+            const label = Object.entries(fo.degree || {}).find(([_, v]) => v === s.degree)?.[0];
+            const sel = document.getElementById('filter-degree');
+            if (sel && label) { sel.value = label; searchState.filters.degree = label; }
+        }
+        if (s.scale && fo) {
+            const label = Object.entries(fo.scale || {}).find(([_, v]) => v === s.scale)?.[0];
+            const sel = document.getElementById('filter-scale');
+            if (sel && label) { sel.value = label; searchState.filters.scale = label; }
+        }
+        if (s.stage && fo) {
+            const label = Object.entries(fo.stage || {}).find(([_, v]) => v === s.stage)?.[0];
+            const sel = document.getElementById('filter-stage');
+            if (sel && label) { sel.value = label; searchState.filters.stage = label; }
+        }
+    }
+
     async function initSearchPage() {
         if (!searchState.filterOptions) {
             const result = await api.getFilterOptions();
@@ -729,12 +1029,6 @@
     }
 
     async function initMatchesPage() {
-        const resumeResult = await api.getResume();
-        if (resumeResult?.ok) {
-            matchState.resume = resumeResult.data.content || '';
-            matchState.resumeLoaded = !!resumeResult.data.content?.trim();
-            matchState.resumeDirty = false;
-        }
         const progress = await api.getMatchProgress();
         if (progress?.ok && progress.data.status === 'running') {
             matchState.matchProgress = progress.data;
@@ -744,14 +1038,14 @@
         renderPage();
     }
 
-    function initVditor() {
-        if (matchState.vditor) {
-            try { matchState.vditor.destroy(); } catch(e) {}
-            matchState.vditor = null;
+    function initResumeVditor() {
+        if (resumePageState.vditor) {
+            try { resumePageState.vditor.destroy(); } catch(e) {}
+            resumePageState.vditor = null;
         }
         const el = document.getElementById('vditor');
         if (!el) return;
-        matchState.vditor = new Vditor('vditor', {
+        resumePageState.vditor = new Vditor('vditor', {
             theme: 'dark',
             mode: 'ir',
             lang: 'zh_CN',
@@ -770,28 +1064,20 @@
                 'fullscreen', 'preview',
             ],
             after: () => {
-                if (matchState.resume) {
-                    matchState._silenceInput = true;
-                    matchState.vditor.setValue(matchState.resume);
-                    matchState._silenceInput = false;
-                    // Resume is already loaded from backend, not dirty
-                    matchState.resumeLoaded = true;
-                    matchState.resumeDirty = false;
+                if (resumePageState.content) {
+                    resumePageState._silenceInput = true;
+                    resumePageState.vditor.setValue(resumePageState.content);
+                    resumePageState._silenceInput = false;
+                    resumePageState.contentDirty = false;
                 }
             },
             input: () => {
-                if (matchState._silenceInput) return;
-                matchState.resume = matchState.vditor.getValue();
-                matchState.resumeDirty = true;
-                const saveBtn = document.getElementById('btn-save-resume');
+                if (resumePageState._silenceInput) return;
+                resumePageState.content = resumePageState.vditor.getValue();
+                resumePageState.contentDirty = true;
+                const saveBtn = document.getElementById('btn-save-resume-edit');
                 if (saveBtn) {
                     saveBtn.disabled = false;
-                    saveBtn.textContent = '保存简历';
-                }
-                const statusEl = document.querySelector('.resume-status');
-                if (statusEl) {
-                    statusEl.className = 'resume-status dirty';
-                    statusEl.textContent = '未保存更改';
                 }
             },
         });
@@ -954,6 +1240,87 @@
             stopProgressPolling();
         });
 
+        // Pipeline buttons
+        document.getElementById('btn-start-pipeline')?.addEventListener('click', async () => {
+            const keyword = document.getElementById('search-keyword')?.value?.trim();
+            if (!keyword) { alert('请输入搜索关键词'); return; }
+            const city = document.getElementById('search-city')?.value?.trim() || '上海';
+            const maxPages = parseInt(document.getElementById('search-pages')?.value || '3');
+            const minScore = searchState.pipelineMinScore;
+
+            const filters = {};
+            document.querySelectorAll('[data-filter]').forEach(sel => {
+                const key = sel.dataset.filter;
+                const value = sel.value;
+                if (value) filters[key] = value;
+            });
+
+            searchState.keyword = keyword;
+            searchState.city = city;
+            searchState.maxPages = maxPages;
+            searchState.filters = filters;
+            searchState.resultOffset = 0;
+            searchState.pipelineRunning = true;
+            searchState.pipelineProgress = {
+                phase: 'init', jobs_found: 0, jobs_scored: 0,
+                current_page: 0, total_pages: maxPages,
+                details_scraped: 0, details_skipped: 0, jobs_skipped: 0,
+            };
+
+            const supplements = resumePageState.supplements.map(s => s.content);
+            const result = await api.startPipeline(null, keyword, city, maxPages, filters, minScore, supplements);
+            if (result?.ok) {
+                startPipelinePolling();
+                renderPage();
+            } else {
+                searchState.pipelineRunning = false;
+                searchState.pipelineProgress = null;
+                alert('流水线启动失败: ' + (result?.error || '未知错误'));
+                renderPage();
+            }
+        });
+
+        document.getElementById('btn-cancel-pipeline')?.addEventListener('click', async () => {
+            await api.cancelPipeline();
+            stopPipelinePolling();
+            searchState.pipelineRunning = false;
+            searchState.pipelineProgress = null;
+            renderPage();
+        });
+
+        // Pipeline min score slider
+        const scoreSlider = document.getElementById('pipeline-min-score');
+        if (scoreSlider) {
+            scoreSlider.addEventListener('input', (e) => {
+                searchState.pipelineMinScore = parseInt(e.target.value) / 100;
+                const label = e.target.parentElement.querySelector('.score-slider-value');
+                if (label) label.textContent = e.target.value + '%';
+            });
+        }
+
+        // AI suggestion buttons
+        document.getElementById('btn-ai-suggest')?.addEventListener('click', async () => {
+            searchState.aiSuggestionLoading = true;
+            searchState.aiSuggestion = null;
+            renderPage();
+            const result = await api.inferSearchConditions();
+            searchState.aiSuggestionLoading = false;
+            searchState.aiSuggestion = result;
+            renderPage();
+        });
+
+        document.getElementById('btn-apply-ai-suggestion')?.addEventListener('click', () => {
+            applyAiSuggestion();
+        });
+
+        document.getElementById('btn-search-ai-suggestion')?.addEventListener('click', () => {
+            applyAiSuggestion();
+            // Auto-trigger search after applying
+            setTimeout(() => {
+                document.getElementById('btn-start-search')?.click();
+            }, 100);
+        });
+
         // City autocomplete
         const cityInput = document.getElementById('search-city');
         if (cityInput) {
@@ -1037,95 +1404,111 @@
             }
         });
 
-        // Match page - Resume save
-        document.getElementById('btn-save-resume')?.addEventListener('click', async () => {
-            const content = matchState.vditor
-                ? matchState.vditor.getValue().trim()
-                : matchState.resume.trim();
-            if (!content) { alert('简历内容为空，请输入或上传简历'); return; }
-            const result = await api.saveResume(content);
-            if (result?.ok) {
-                matchState.resume = content;
-                matchState.resumeLoaded = true;
-                matchState.resumeDirty = false;
-                const saveBtn = document.getElementById('btn-save-resume');
-                if (saveBtn) {
-                    saveBtn.disabled = true;
-                    saveBtn.textContent = '已保存';
-                }
-                const statusEl = document.querySelector('.resume-status');
-                if (statusEl) {
-                    statusEl.className = 'resume-status saved';
-                    statusEl.textContent = '已保存';
-                }
-            } else {
-                alert('保存失败: ' + (result?.error || '未知错误'));
-            }
-        });
-
-        // Match page - File upload
-        document.getElementById('btn-upload-resume')?.addEventListener('click', () => {
+        // Resume page - Add resume (upload)
+        document.getElementById('btn-add-resume')?.addEventListener('click', () => {
             document.getElementById('resume-file-input')?.click();
         });
 
         document.getElementById('resume-file-input')?.addEventListener('change', async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
-            const statusEl = document.getElementById('upload-status');
-            if (statusEl) {
-                statusEl.textContent = `正在解析 ${file.name}...`;
-                statusEl.className = 'upload-status parsing';
-            }
             const reader = new FileReader();
             reader.onload = async (event) => {
                 const base64 = event.target.result.split(',')[1];
                 const result = await api.uploadResume(file.name, base64);
                 if (result?.ok) {
-                    const content = result.data.content;
-                    matchState.resume = content;
-                    // Auto-save uploaded resume
-                    const saveResult = await api.saveResume(content);
-                    if (saveResult?.ok) {
-                        matchState.resumeLoaded = true;
-                        matchState.resumeDirty = false;
-                    } else {
-                        matchState.resumeDirty = true;
-                    }
-                    if (matchState.vditor) {
-                        matchState._silenceInput = true;
-                        matchState.vditor.setValue(content);
-                        matchState._silenceInput = false;
-                    }
-                    if (statusEl) {
-                        statusEl.textContent = `${file.name} 解析成功`;
-                        statusEl.className = 'upload-status success';
-                    }
-                    const saveBtn = document.getElementById('btn-save-resume');
-                    if (saveBtn) {
-                        saveBtn.disabled = !matchState.resumeDirty;
-                        saveBtn.textContent = matchState.resumeDirty ? '保存简历' : '已保存';
-                    }
-                    const resumeStatusEl = document.querySelector('.resume-status');
-                    if (resumeStatusEl) {
-                        resumeStatusEl.className = matchState.resumeDirty ? 'resume-status dirty' : 'resume-status saved';
-                        resumeStatusEl.textContent = matchState.resumeDirty ? '未保存更改' : '已保存';
-                    }
-                    // Update match button state
-                    const matchBtn = document.getElementById('btn-start-match');
-                    if (matchBtn) {
-                        const canMatch = matchState.resumeLoaded && !matchState.resumeDirty && matchState.selectedJobIds.size > 0;
-                        matchBtn.disabled = !canMatch;
-                    }
+                    await initResumesPage();
                 } else {
-                    if (statusEl) {
-                        statusEl.textContent = result?.error || '解析失败';
-                        statusEl.className = 'upload-status error';
-                    }
                     alert('文件解析失败: ' + (result?.error || '未知错误'));
                 }
                 e.target.value = '';
             };
             reader.readAsDataURL(file);
+        });
+
+        // Resume page - Edit resume
+        document.querySelectorAll('[data-edit-resume]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = parseInt(btn.dataset.editResume);
+                const result = await api.getResumeById(id);
+                if (result?.ok) {
+                    resumePageState.editingId = id;
+                    resumePageState.content = result.data.content || '';
+                    resumePageState.contentDirty = false;
+                    renderPage();
+                }
+            });
+        });
+
+        // Resume page - Save resume edit
+        document.getElementById('btn-save-resume-edit')?.addEventListener('click', async () => {
+            const content = resumePageState.vditor
+                ? resumePageState.vditor.getValue().trim()
+                : resumePageState.content.trim();
+            if (!content) { alert('简历内容为空'); return; }
+            const result = await api.saveResume(content);
+            if (result?.ok) {
+                resumePageState.contentDirty = false;
+                resumePageState.editingId = null;
+                await initResumesPage();
+            } else {
+                alert('保存失败: ' + (result?.error || '未知错误'));
+            }
+        });
+
+        // Resume page - Cancel edit
+        document.getElementById('btn-cancel-resume-edit')?.addEventListener('click', () => {
+            resumePageState.editingId = null;
+            resumePageState.contentDirty = false;
+            renderPage();
+        });
+
+        // Resume page - Set active
+        document.querySelectorAll('[data-set-active]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = parseInt(btn.dataset.setActive);
+                await api.setActiveResume(id);
+                await initResumesPage();
+            });
+        });
+
+        // Resume page - Delete
+        document.querySelectorAll('[data-delete-resume]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = parseInt(btn.dataset.deleteResume);
+                if (!confirm('确定删除此简历？')) return;
+                await api.deleteResume(id);
+                await initResumesPage();
+            });
+        });
+
+        // Resume page - Supplement upload
+        document.getElementById('btn-upload-supplement')?.addEventListener('click', () => {
+            document.getElementById('supplement-file-input')?.click();
+        });
+
+        document.getElementById('supplement-file-input')?.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                const base64 = event.target.result.split(',')[1];
+                const result = await api.uploadSupplement(file.name, base64);
+                if (result?.ok) {
+                    resumePageState.supplements.push({ filename: file.name, content: result.data.content });
+                    renderPage();
+                }
+                e.target.value = '';
+            };
+            reader.readAsDataURL(file);
+        });
+
+        document.querySelectorAll('[data-remove-supplement]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.removeSupplement);
+                resumePageState.supplements.splice(idx, 1);
+                renderPage();
+            });
         });
 
         // Match page - Load jobs
@@ -1151,8 +1534,7 @@
             if (countEl) countEl.textContent = `已选 ${matchState.selectedJobIds.size} 个`;
             const matchBtn = document.getElementById('btn-start-match');
             if (matchBtn) {
-                const canMatch = matchState.resumeLoaded && !matchState.resumeDirty && matchState.selectedJobIds.size > 0;
-                matchBtn.disabled = !canMatch;
+                matchBtn.disabled = matchState.selectedJobIds.size === 0;
                 matchBtn.textContent = `开始匹配 (${matchState.selectedJobIds.size}个职位)`;
             }
         });
@@ -1187,8 +1569,7 @@
                 }
                 const matchBtn = document.getElementById('btn-start-match');
                 if (matchBtn) {
-                    const canMatch = matchState.resumeLoaded && !matchState.resumeDirty && matchState.selectedJobIds.size > 0;
-                    matchBtn.disabled = !canMatch;
+                    matchBtn.disabled = matchState.selectedJobIds.size === 0;
                     matchBtn.textContent = `开始匹配 (${matchState.selectedJobIds.size}个职位)`;
                 }
                 const item = e.target.closest('.job-select-item');
@@ -1202,10 +1583,6 @@
         document.getElementById('btn-start-match')?.addEventListener('click', async () => {
             const jobIds = [...matchState.selectedJobIds];
             if (!jobIds.length) { alert('请选择至少一个职位'); return; }
-            if (!matchState.resumeLoaded || matchState.resumeDirty) {
-                alert('请先保存简历');
-                return;
-            }
             // Reset match state for new session
             matchState.phase = 'init_model';
             matchState.phaseProgress = null;
@@ -1214,7 +1591,7 @@
             matchState.summaryBuffer = '';
             matchState.summaryStructured = null;
 
-            const supplements = matchState.supplements.map(s => s.content);
+            const supplements = resumePageState.supplements.map(s => s.content);
             const result = await api.startMatch(jobIds, supplements);
             if (result?.ok) {
                 startMatchPolling();
@@ -1250,80 +1627,28 @@
             stopMatchPolling();
         });
 
-        // Supplement upload
-        document.getElementById('btn-upload-supplement')?.addEventListener('click', () => {
-            document.getElementById('supplement-file-input')?.click();
-        });
-
-        document.getElementById('supplement-file-input')?.addEventListener('change', async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            const statusEl = document.getElementById('supplement-upload-status');
-            if (statusEl) {
-                statusEl.textContent = `正在解析 ${file.name}...`;
-                statusEl.className = 'upload-status parsing';
-            }
-            const reader = new FileReader();
-            reader.onload = async (event) => {
-                const base64 = event.target.result.split(',')[1];
-                const result = await api.uploadSupplement(file.name, base64);
-                if (result?.ok) {
-                    matchState.supplements.push({ filename: file.name, content: result.data.content });
-                    if (statusEl) {
-                        statusEl.textContent = `${file.name} 已添加`;
-                        statusEl.className = 'upload-status success';
-                    }
-                    // Re-render supplement list
-                    const listEl = document.getElementById('supplement-list');
-                    if (listEl) {
-                        const i = matchState.supplements.length - 1;
-                        const item = document.createElement('div');
-                        item.className = 'supplement-item';
-                        item.innerHTML = `<span>${file.name}</span><button class="btn-remove" data-remove-supplement="${i}">&times;</button>`;
-                        item.querySelector('.btn-remove').addEventListener('click', () => {
-                            matchState.supplements.splice(i, 1);
-                            item.remove();
-                        });
-                        listEl.appendChild(item);
-                    }
-                } else {
-                    if (statusEl) {
-                        statusEl.textContent = result?.error || '解析失败';
-                        statusEl.className = 'upload-status error';
-                    }
-                }
-                e.target.value = '';
-            };
-            reader.readAsDataURL(file);
-        });
-
-        // Supplement remove buttons
-        document.querySelectorAll('[data-remove-supplement]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const idx = parseInt(btn.dataset.removeSupplement);
-                matchState.supplements.splice(idx, 1);
-                btn.closest('.supplement-item')?.remove();
-            });
-        });
-
         // Match page - Expand/collapse result detail
         bindMatchResultEvents();
     }
 
     function navigateTo(page) {
-        if (currentPage === 'matches' && matchState.vditor) {
-            try { matchState.vditor.destroy(); } catch(e) {}
-            matchState.vditor = null;
+        if (resumePageState.vditor) {
+            try { resumePageState.vditor.destroy(); } catch(e) {}
+            resumePageState.vditor = null;
         }
         currentPage = page;
         document.getElementById('content').scrollTop = 0;
         document.querySelectorAll('.nav-item').forEach(n => {
             n.classList.toggle('active', n.dataset.page === page);
         });
-        if (page === 'search') {
+        if (page === 'resumes') {
+            initResumesPage();
+        } else if (page === 'search') {
             initSearchPage();
         } else if (page === 'matches') {
             initMatchesPage();
+        } else if (page === 'summary') {
+            initSummaryPage();
         } else {
             renderPage();
         }
@@ -1336,11 +1661,29 @@
         matchState.phaseProgress = { current: 0, total: evt.total || 0 };
         matchState.modelDownloadStatus = null;
         updateMatchDynamicArea();
+        // Pipeline scraping/scoring phase starts
+        if (evt.phase === 'pipeline_scraping' || evt.phase === 'pipeline_scoring') {
+            searchState.pipelineRunning = true;
+            if (currentPage === 'search') renderPage();
+        }
     }
 
     function handlePhaseProgress(evt) {
         matchState.phaseProgress = { current: evt.current || 0, total: evt.total || 0 };
         updateMatchDynamicArea();
+        // Pipeline progress updates
+        if (searchState.pipelineRunning && currentPage === 'search') {
+            if (searchState.pipelineProgress) {
+                if (evt.current !== undefined) {
+                    searchState.pipelineProgress.current_page = evt.current;
+                    searchState.pipelineProgress.total_pages = evt.total || searchState.pipelineProgress.total_pages;
+                }
+                if (evt.jobs_found !== undefined) searchState.pipelineProgress.jobs_found = evt.jobs_found;
+                if (evt.jobs_scored !== undefined) searchState.pipelineProgress.jobs_scored = evt.jobs_scored;
+                searchState.pipelineProgress.phase = evt.phase === 'pipeline_scraping' ? 'scraping' : 'scoring';
+            }
+            renderPage();
+        }
     }
 
     function handlePhaseDone(evt) {
@@ -1381,6 +1724,12 @@
             retrieved_chunks: evt.retrieved_chunks,
         });
         appendJobCard(evt);
+
+        // Update pipeline progress if running
+        if (searchState.pipelineRunning && searchState.pipelineProgress) {
+            searchState.pipelineProgress.jobs_scored = (searchState.pipelineProgress.jobs_scored || 0) + 1;
+            if (currentPage === 'search') renderPage();
+        }
     }
 
     function handleJobFailed(evt) {
@@ -1431,12 +1780,62 @@
         matchState.phase = 'cancelled';
         stopMatchPolling();
         updateMatchDynamicArea();
+        // Pipeline cancelled
+        if (searchState.pipelineRunning) {
+            searchState.pipelineRunning = false;
+            searchState.pipelineProgress = null;
+            stopPipelinePolling();
+            if (currentPage === 'search') renderPage();
+        }
     }
 
     function handleMatchError(evt) {
         matchState.phase = 'failed';
         stopMatchPolling();
         updateMatchDynamicArea();
+        // Pipeline error
+        if (searchState.pipelineRunning) {
+            searchState.pipelineRunning = false;
+            searchState.pipelineProgress = null;
+            stopPipelinePolling();
+            if (currentPage === 'search') renderPage();
+        }
+    }
+
+    function handlePipelineCompleted(evt) {
+        searchState.pipelineRunning = false;
+        searchState.pipelineProgress = null;
+        stopPipelinePolling();
+        if (currentPage === 'search') {
+            loadResults().then(() => renderPage());
+        }
+    }
+
+    function startPipelinePolling() {
+        stopPipelinePolling();
+        searchState.pipelinePollTimer = setInterval(async () => {
+            const result = await api.getPipelineProgress();
+            if (result?.ok && result.data.status !== 'idle') {
+                searchState.pipelineProgress = result.data;
+                if (result.data.status === 'running') {
+                    renderPage();
+                } else {
+                    stopPipelinePolling();
+                    searchState.pipelineRunning = false;
+                    if (result.data.status === 'completed') {
+                        await loadResults();
+                    }
+                    renderPage();
+                }
+            }
+        }, 2000);
+    }
+
+    function stopPipelinePolling() {
+        if (searchState.pipelinePollTimer) {
+            clearInterval(searchState.pipelinePollTimer);
+            searchState.pipelinePollTimer = null;
+        }
     }
 
     function appendJobCard(evt) {
@@ -1613,6 +2012,7 @@
             case 'summary_chunk':        handleSummaryChunk(evt); break;
             case 'summary_done':         handleSummaryDone(evt); break;
             case 'match_completed':      handleMatchCompleted(evt); break;
+            case 'pipeline_completed':   handlePipelineCompleted(evt); break;
             case 'cancelled':            handleCancelled(evt); break;
             case 'error':                handleMatchError(evt); break;
             default:

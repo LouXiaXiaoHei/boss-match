@@ -135,23 +135,6 @@ class AIClient:
             stream=True,
         )
 
-    # -- Backward compat: will be removed when B5 rewrites matcher.py --
-
-    def match_job_seeker(self, resume: str, job_detail: dict) -> JobScoreResult:
-        """Legacy compat: build prompt from resume text + job detail, call LLM.
-
-        Deprecated — B5 Matcher rewrite will use match_with_evidence() directly.
-        """
-        job_id = job_detail.get("job_id", "")
-        # Wrap resume as a single chunk so it appears in the evidence block
-        from src.ai.retriever import RetrievalResult
-        resume_chunk = RetrievalResult(
-            chunk_id="resume_full", text=resume, source="resume",
-            section="resume", score=1.0, metadata={},
-        )
-        user_prompt = build_match_user_prompt(job_detail, [resume_chunk])
-        return self.match_with_evidence(job_id, user_prompt, retrieved_chunks=["resume_full"])
-
     @staticmethod
     def _parse_json(content: str) -> dict | None:
         """Two-stage JSON parsing: direct parse, then regex from markdown code block."""

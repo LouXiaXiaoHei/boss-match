@@ -17,7 +17,8 @@ class Retriever:
 
     def retrieve_for_job(self, query_text: str = None,
                          query_embedding: list[float] = None,
-                         top_k: int = 5) -> list[RetrievalResult]:
+                         top_k: int = 5,
+                         resume_id: str = None) -> list[RetrievalResult]:
         """Retrieve resume + supplement chunks relevant to a job query.
 
         Either query_text or query_embedding must be provided.
@@ -33,6 +34,7 @@ class Retriever:
             query_embedding,
             sources=["resume", "supplement"],
             top_k=top_k,
+            resume_id=resume_id,
         )
 
     def retrieve_supplements(self, query_embedding: list[float] = None,

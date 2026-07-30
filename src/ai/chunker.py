@@ -11,6 +11,7 @@ class Chunk:
     source: str          # "resume" | "job" | "supplement"
     job_id: str = ""
     section: str = ""
+    resume_id: str = ""  # links chunk to a specific resume
     metadata: dict = field(default_factory=dict)
 
 
