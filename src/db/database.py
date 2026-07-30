@@ -112,6 +112,18 @@ CREATE INDEX IF NOT EXISTS idx_scraped_job_identity ON scraped_job(identity);
 CREATE INDEX IF NOT EXISTS idx_scraped_detail_job_id ON scraped_detail(job_id);
 CREATE INDEX IF NOT EXISTS idx_match_result_identity_source ON match_result(identity, source_id);
 
+CREATE TABLE IF NOT EXISTS geek_resume_list (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    summary TEXT DEFAULT '',
+    is_active INTEGER DEFAULT 0,
+    chunk_count INTEGER DEFAULT 0,
+    file_source TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS match_summary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     identity TEXT NOT NULL DEFAULT 'geek',
@@ -164,6 +176,26 @@ class Database:
             conn.execute("ALTER TABLE match_result ADD COLUMN gaps TEXT")
         if "retrieved_chunks" not in match_cols:
             conn.execute("ALTER TABLE match_result ADD COLUMN retrieved_chunks TEXT")
+
+        # Migrate geek_resume -> geek_resume_list
+        new_cols = {r[1] for r in conn.execute("PRAGMA table_info(geek_resume_list)").fetchall()}
+        if not new_cols:
+            # Table just created by SCHEMA_SQL, no migration needed
+            pass
+        # If old geek_resume has data but geek_resume_list is empty, migrate
+        try:
+            old_row = conn.execute("SELECT content FROM geek_resume WHERE id=1").fetchone()
+            new_count = conn.execute("SELECT COUNT(*) FROM geek_resume_list").fetchone()[0]
+            if old_row and old_row["content"] and new_count == 0:
+                content = old_row["content"]
+                summary = content[:100].replace("\n", " ") if len(content) > 100 else content.replace("\n", " ")
+                conn.execute(
+                    """INSERT INTO geek_resume_list (name, content, summary, is_active, chunk_count, file_source)
+                       VALUES ('我的简历', ?, ?, 1, 0, 'migrated')""",
+                    (content, summary),
+                )
+        except Exception:
+            pass  # Old table may not exist
 
         conn.commit()
 

@@ -64,13 +64,15 @@ class Matcher:
         self._current_task: MatchTask | None = None
         self._cancel_event = threading.Event()
         self._auth_failed = threading.Event()
+        self._resume_id = 1
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def start_match(self, resume: str, job_ids: list[str],
-                    supplements: list[str] = None, concurrency: int = 3) -> dict:
+                    supplements: list[str] = None, concurrency: int = 3,
+                    resume_id: int = None) -> dict:
         """Start a match task. Returns {ok, data: {task_id}} or {ok: False, error: ...}."""
         with self._lock:
             if self._current_task and self._current_task.status == "running":
@@ -82,6 +84,7 @@ class Matcher:
             if not job_ids:
                 return {"ok": False, "error": "请选择至少一个职位"}
 
+            self._resume_id = resume_id or 1
             log_id = self.repo.create_scrape_log("geek", "match")
             task = MatchTask(task_id=log_id, total_jobs=len(job_ids))
             self._current_task = task
@@ -89,7 +92,7 @@ class Matcher:
             self._auth_failed.clear()
 
         # Clear previous match results for this source before starting fresh
-        self.repo.clear_match_results("geek", source_id=1)
+        self.repo.clear_match_results("geek", source_id=self._resume_id)
 
         self._bus = EventBus(self._notify)
         self._bus.start()
@@ -182,9 +185,21 @@ class Matcher:
         chunker = Chunker()
         chunks_to_embed = []
 
-        # Resume chunking
-        resume_chunks = chunker.split_resume(resume)
-        chunks_to_embed.extend(resume_chunks)
+        # Resume chunking — skip if already embedded for this resume_id
+        resume_already_indexed = False
+        resume_id_str = str(self._resume_id) if self._resume_id else None
+        if resume_id_str:
+            active = self.repo.get_resume_by_id(self._resume_id)
+            if active and active.get("chunk_count", 0) > 0:
+                resume_already_indexed = True
+                log.info(f"Resume {self._resume_id} already indexed ({active['chunk_count']} chunks), skipping")
+
+        if not resume_already_indexed:
+            resume_chunks = chunker.split_resume(resume)
+            if resume_id_str:
+                for c in resume_chunks:
+                    c.resume_id = resume_id_str
+            chunks_to_embed.extend(resume_chunks)
 
         # Job chunking
         job_infos = {}
@@ -227,7 +242,8 @@ class Matcher:
         self._retriever = Retriever(vector_store, self._embedder)
         self._bus.emit(MatchEvent("phase_done", "build_index"))
 
-    def _build_job_info(self, detail) -> dict:
+    @staticmethod
+    def _build_job_info(detail) -> dict:
         """Convert scraped_detail dict to job_info dict for prompts."""
         if not detail:
             return {"title": "未知", "company": "未知"}
@@ -275,7 +291,7 @@ class Matcher:
                     completed += 1
 
                     self.repo.save_match_result(
-                        identity="geek", source_id=1,
+                        identity="geek", source_id=self._resume_id,
                         target_job_id=jid,
                         score=result.score,
                         reasoning=result.reasoning,
@@ -330,16 +346,40 @@ class Matcher:
         self._check_cancel()
 
         job_info = self._job_infos[job_id]
+        return self.score_single_job(
+            job_id, job_info, ai_client,
+            self._embedder, self._retriever, self._resume_id,
+        )
 
-        # Retrieve resume-relevant chunks
+    @staticmethod
+    def score_single_job(job_id, job_info, ai_client,
+                         embedder, retriever, resume_id,
+                         cancel_event=None, auth_failed_event=None):
+        """Score a single job — reusable by Pipeline and Matcher.
+
+        Args:
+            job_id: Job identifier string.
+            job_info: Dict with title, skill_tags, etc.
+            ai_client: AIClient instance.
+            embedder: Embedder instance.
+            retriever: Retriever instance.
+            resume_id: Resume ID for filtering.
+            cancel_event: Optional threading.Event for cancellation.
+            auth_failed_event: Optional threading.Event for auth failure.
+        """
+        if auth_failed_event and auth_failed_event.is_set():
+            raise AuthFailedError("认证失败，已中止")
+        if cancel_event and cancel_event.is_set():
+            raise CancelledError("用户取消")
+
         skill_tags = job_info.get("skill_tags", [])
         if not isinstance(skill_tags, list):
             skill_tags = []
         query_text = f"{job_info.get('title', '')} {' '.join(skill_tags)}"
-        query_emb = self._embedder.embed_one(query_text)
-        retrieved = self._retriever.retrieve_for_job(query_embedding=query_emb, top_k=5)
+        query_emb = embedder.embed_one(query_text)
+        resume_id_str = str(resume_id) if resume_id else None
+        retrieved = retriever.retrieve_for_job(query_embedding=query_emb, top_k=5, resume_id=resume_id_str)
 
-        # Build prompt + call LLM
         user_prompt = build_match_user_prompt(job_info, retrieved)
         chunk_ids = [c.chunk_id for c in retrieved]
 
@@ -347,7 +387,8 @@ class Matcher:
             return ai_client.match_with_evidence(job_id, user_prompt, chunk_ids)
         except ValueError as e:
             if "认证失败" in str(e):
-                self._auth_failed.set()
+                if auth_failed_event:
+                    auth_failed_event.set()
                 raise AuthFailedError(str(e))
             raise
 
@@ -374,7 +415,7 @@ class Matcher:
         summary = streamer.stream(user_prompt)
 
         self.repo.save_match_summary(
-            identity="geek", source_id=1,
+            identity="geek", source_id=self._resume_id,
             structured=summary.structured,
             raw_text=summary.raw,
         )

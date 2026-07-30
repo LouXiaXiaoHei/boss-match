@@ -23,20 +23,121 @@ class Repository:
     # ---- Geek Resume ----
 
     def get_resume(self) -> str:
+        """Get active resume content (backward compatible)."""
+        active = self.get_active_resume()
+        return active["content"] if active else ""
+
+    def save_resume(self, content: str):
+        """Save to active resume, create if none (backward compatible)."""
+        active = self.get_active_resume()
+        if active:
+            self.update_resume(active["id"], content=content)
+        else:
+            self.save_resume_new(name="我的简历", content=content)
+
+    # ---- Geek Resume List ----
+
+    def list_resumes(self) -> list[dict]:
         conn = self.db._conn()
         try:
-            row = conn.execute("SELECT content FROM geek_resume WHERE id=1").fetchone()
-            return row["content"] if row else ""
+            rows = conn.execute(
+                "SELECT * FROM geek_resume_list ORDER BY updated_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()
 
-    def save_resume(self, content: str):
+    def get_resume_by_id(self, resume_id: int) -> dict | None:
+        conn = self.db._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM geek_resume_list WHERE id=?", (resume_id,)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_active_resume(self) -> dict | None:
+        conn = self.db._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM geek_resume_list WHERE is_active=1 LIMIT 1"
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def save_resume_new(self, name: str, content: str, file_source: str = "") -> int:
+        conn = self.db._conn()
+        try:
+            summary = content[:100].replace("\n", " ") if len(content) > 100 else content.replace("\n", " ")
+            cur = conn.execute(
+                """INSERT INTO geek_resume_list (name, content, summary, is_active, file_source)
+                   VALUES (?, ?, ?, 1, ?)""",
+                (name, content, summary, file_source),
+            )
+            # Deactivate others
+            rid = cur.lastrowid
+            conn.execute(
+                "UPDATE geek_resume_list SET is_active=0 WHERE id != ?", (rid,)
+            )
+            conn.commit()
+            return rid
+        finally:
+            conn.close()
+
+    def update_resume(self, resume_id: int, name: str = None, content: str = None):
+        conn = self.db._conn()
+        try:
+            sets = []
+            params = []
+            if name is not None:
+                sets.append("name=?")
+                params.append(name)
+            if content is not None:
+                sets.append("content=?")
+                params.append(content)
+                summary = content[:100].replace("\n", " ") if len(content) > 100 else content.replace("\n", " ")
+                sets.append("summary=?")
+                params.append(summary)
+                sets.append("chunk_count=0")  # Content changed, need re-embed
+            if not sets:
+                return
+            sets.append("updated_at=datetime('now')")
+            params.append(resume_id)
+            conn.execute(
+                f"UPDATE geek_resume_list SET {', '.join(sets)} WHERE id=?", params
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def set_active_resume(self, resume_id: int):
+        conn = self.db._conn()
+        try:
+            conn.execute("UPDATE geek_resume_list SET is_active=0")
+            conn.execute(
+                "UPDATE geek_resume_list SET is_active=1, updated_at=datetime('now') WHERE id=?",
+                (resume_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_resume(self, resume_id: int):
+        conn = self.db._conn()
+        try:
+            conn.execute("DELETE FROM geek_resume_list WHERE id=?", (resume_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_resume_chunk_count(self, resume_id: int, count: int):
         conn = self.db._conn()
         try:
             conn.execute(
-                """INSERT INTO geek_resume (id, content) VALUES (1, ?)
-                   ON CONFLICT(id) DO UPDATE SET content=excluded.content, updated_at=datetime('now')""",
-                (content,),
+                "UPDATE geek_resume_list SET chunk_count=? WHERE id=?",
+                (count, resume_id),
             )
             conn.commit()
         finally:

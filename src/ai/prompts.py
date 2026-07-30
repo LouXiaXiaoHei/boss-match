@@ -77,6 +77,45 @@ def build_match_user_prompt(job_info: dict, resume_chunks: list) -> str:
 请基于以上【简历依据】评估与【职位信息】的匹配度，严格按 System Prompt 的 JSON 格式输出。"""
 
 
+SEARCH_ORCHESTRATOR_SYSTEM_PROMPT = """你是一名求职搜索策略师。根据用户简历内容，推断最适合的 BOSS直聘搜索条件。
+
+【铁律】
+1. 只基于简历中实际提及的技能、经验和偏好推断
+2. 筛选值必须严格使用下方枚举中的中文标签，不得使用其他值
+3. 如果简历信息不足以推断某项，该项设为 null
+
+【可用筛选值枚举】
+薪资: 不限, 3K以下, 3-5K, 5-10K, 10-20K, 20-50K, 50K以上
+经验: 不限, 在校生, 应届生, 经验不限, 1年以内, 1-3年, 3-5年, 5-10年, 10年以上
+学历: 不限, 初中及以下, 中专/中技, 高中, 大专, 本科, 硕士, 博士
+规模: 0-20人, 20-99人, 100-499人, 500-999人, 1000-9999人, 10000人以上
+融资: 未融资, 天使轮, A轮, B轮, C轮, D轮及以上, 已上市, 不需要融资
+
+【输出格式】
+严格输出以下 JSON，不得包含任何额外文字：
+{
+  "keywords": ["关键词1", "关键词2"],
+  "city": "城市名或null",
+  "salary": "薪资标签或null",
+  "experience": "经验标签或null",
+  "degree": "学历标签或null",
+  "scale": "规模标签或null",
+  "stage": "融资标签或null",
+  "reasoning": "推断理由，100字以内"
+}
+"""
+
+
+def build_search_orchestrator_user_prompt(resume_text: str) -> str:
+    return f"""以下是用户的简历内容：
+
+---
+{resume_text[:3000]}
+---
+
+请根据以上简历内容，推断最适合的 BOSS直聘搜索条件。严格按 System Prompt 的 JSON 格式输出。"""
+
+
 SUMMARY_SYSTEM_PROMPT = """你是一名职业规划顾问。基于【匹配结果数据】和【检索到的补充依据】，为求职者提供整体职业规划建议。
 
 【铁律】

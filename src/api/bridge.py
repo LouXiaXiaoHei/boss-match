@@ -26,6 +26,7 @@ MATCH_EVENT_TYPES = {
     "match_completed", "error", "cancelled",
     "match",  # backward compat
     "embedder_init",  # standalone embedder init events
+    "pipeline_completed",  # pipeline completion event
 }
 
 
@@ -363,6 +364,10 @@ class AppAPI:
     def save_resume(self, content):
         try:
             self.repo.save_resume(content)
+            # Trigger background embedding for active resume
+            active = self.repo.get_active_resume()
+            if active and active["content"] == content:
+                self._embed_resume_background(active["id"], content)
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -372,19 +377,102 @@ class AppAPI:
         return {"ok": True, "data": {"content": content}}
 
     def upload_resume(self, filename, base64_content):
-        """接收上传的简历文件，解析提取文本。"""
+        """接收上传的简历文件，解析提取文本，创建新简历记录。"""
         import base64
         from src.core.resume_parser import parse_resume_file
 
         try:
             file_bytes = base64.b64decode(base64_content)
             content = parse_resume_file(filename, file_bytes)
-            return {"ok": True, "data": {"content": content}}
+            resume_id = self.repo.save_resume_new(
+                name=filename, content=content, file_source=filename
+            )
+            self._embed_resume_background(resume_id, content)
+            return {"ok": True, "data": {"content": content, "resume_id": resume_id}}
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         except Exception as e:
             log.error(f"简历文件解析失败: {e}")
             return {"ok": False, "error": f"文件解析失败: {str(e)}"}
+
+    # ---- Resume Management ----
+
+    def list_resumes(self):
+        try:
+            resumes = self.repo.list_resumes()
+            return {"ok": True, "data": {"resumes": resumes}}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def get_resume_by_id(self, resume_id):
+        try:
+            resume_id = int(resume_id)
+            r = self.repo.get_resume_by_id(resume_id)
+            if not r:
+                return {"ok": False, "error": "简历不存在"}
+            return {"ok": True, "data": r}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def delete_resume(self, resume_id):
+        try:
+            resume_id = int(resume_id)
+            from src.ai.vector_store import VectorStore
+            vs = VectorStore()
+            vs.clear_resume(str(resume_id))
+            self.repo.delete_resume(resume_id)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def set_active_resume(self, resume_id):
+        try:
+            resume_id = int(resume_id)
+            self.repo.set_active_resume(resume_id)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ---- AI Search Orchestration ----
+
+    def infer_search_conditions(self, resume_id_json="null"):
+        try:
+            from src.ai.search_orchestrator import SearchOrchestrator
+            resume_id = None
+            if resume_id_json and resume_id_json != "null":
+                resume_id = int(resume_id_json)
+            orchestrator = SearchOrchestrator(self.repo)
+            return orchestrator.infer_search_conditions(resume_id=resume_id)
+        except Exception as e:
+            log.error(f"Search orchestration failed: {e}")
+            return {"ok": False, "error": str(e)}
+
+    def _embed_resume_background(self, resume_id: int, content: str):
+        """Background thread: chunk + embed + write to ChromaDB."""
+        if self._embedder_status != "ready":
+            return  # Model not ready, skip (will embed during match)
+
+        def _work():
+            try:
+                from src.ai.chunker import Chunker
+                from src.ai.vector_store import VectorStore
+                chunker = Chunker()
+                chunks = chunker.split_resume(content, source="resume")
+                for c in chunks:
+                    c.resume_id = str(resume_id)
+                if not chunks:
+                    return
+                texts = [c.text for c in chunks]
+                embeddings = self._embedder.embed(texts)
+                vs = VectorStore()
+                vs.clear_resume(str(resume_id))
+                vs.upsert_chunks(chunks, embeddings)
+                self.repo.update_resume_chunk_count(resume_id, len(chunks))
+                log.info(f"Resume {resume_id} embedded: {len(chunks)} chunks")
+            except Exception as e:
+                log.error(f"Resume embedding failed: {e}")
+
+        threading.Thread(target=_work, daemon=True).start()
 
     # ---- Match ----
 
@@ -394,8 +482,13 @@ class AppAPI:
             supplements = json.loads(supplements_json) if isinstance(supplements_json, str) else supplements_json
         except (json.JSONDecodeError, TypeError):
             return {"ok": False, "error": "Invalid JSON parameters"}
-        resume = self.repo.get_resume()
-        return self._get_geek_api().start_match(resume, job_ids, supplements)
+        active = self.repo.get_active_resume()
+        if not active or not active.get("content", "").strip():
+            return {"ok": False, "error": "请先保存简历"}
+        resume_id = active["id"]
+        return self._get_geek_api().start_match(
+            active["content"], job_ids, supplements, resume_id=resume_id
+        )
 
     def get_match_progress(self):
         return self._get_geek_api().get_match_progress()
@@ -419,7 +512,9 @@ class AppAPI:
             return {"ok": False, "error": f"文件解析失败: {str(e)}"}
 
     def get_match_summary(self):
-        return self._get_geek_api().get_match_summary()
+        active = self.repo.get_active_resume()
+        source_id = active["id"] if active else 1
+        return self._get_geek_api().get_match_summary(source_id=source_id)
 
     def get_match_results(self, source_id="1", limit="50", offset="0"):
         try:
@@ -428,4 +523,52 @@ class AppAPI:
             offset = int(offset)
         except (TypeError, ValueError):
             source_id, limit, offset = 1, 50, 0
+        if source_id <= 0:
+            active = self.repo.get_active_resume()
+            source_id = active["id"] if active else 1
         return self._get_geek_api().get_match_results(source_id, limit, offset)
+
+    # ---- Pipeline ----
+
+    def _get_pipeline(self):
+        if not hasattr(self, '_pipeline') or self._pipeline is None:
+            from src.ai.pipeline import SearchMatchPipeline
+            self._pipeline = SearchMatchPipeline(
+                self.repo, notify_callback=self._notify_frontend,
+                embedder=self._embedder,
+            )
+        return self._pipeline
+
+    def start_pipeline(self, resume_id_json="null", keyword="", city="",
+                       max_pages="3", filters_json="{}",
+                       min_score_json="0", supplements_json="[]"):
+        try:
+            resume_id = int(resume_id_json) if resume_id_json and resume_id_json != "null" else None
+            max_pages = int(max_pages)
+            min_score = float(min_score_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+
+        if not resume_id:
+            active = self.repo.get_active_resume()
+            if not active:
+                return {"ok": False, "error": "请先保存简历"}
+            resume_id = active["id"]
+
+        try:
+            filters = json.loads(filters_json) if isinstance(filters_json, str) else filters_json
+            supplements = json.loads(supplements_json) if isinstance(supplements_json, str) else supplements_json
+        except (json.JSONDecodeError, TypeError):
+            filters, supplements = {}, []
+
+        return self._get_pipeline().start(
+            resume_id=resume_id, keyword=keyword, city=city,
+            max_pages=max_pages, filters=filters,
+            min_score=min_score, supplements=supplements,
+        )
+
+    def get_pipeline_progress(self):
+        return self._get_pipeline().get_progress()
+
+    def cancel_pipeline(self):
+        return self._get_pipeline().cancel()

@@ -1509,3 +1509,318 @@ body {
     color: #8b92a0;
     margin-top: 6px;
 }
+
+/* ---- Resume Management Page ---- */
+.resume-page h2 {
+    margin-bottom: 20px;
+    color: #e4e6eb;
+}
+.resume-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.resume-card {
+    background: #2a2d35;
+    border: 2px solid #3a3d45;
+    border-radius: 12px;
+    padding: 16px;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.resume-card:hover {
+    border-color: #565b66;
+}
+.resume-card.active {
+    border-color: #4a9eff;
+    box-shadow: 0 0 0 1px #4a9eff40;
+}
+.resume-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.resume-card-name {
+    font-weight: 600;
+    color: #e4e6eb;
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.resume-active-badge {
+    background: #4a9eff;
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+.resume-card-summary {
+    font-size: 13px;
+    color: #8b92a0;
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+.resume-card-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #6b7280;
+}
+.resume-chunk-status {
+    color: #22c55e;
+}
+.resume-card-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+.resume-card-add {
+    border: 2px dashed #4a4d55;
+    background: transparent;
+    align-items: center;
+    justify-content: center;
+    min-height: 160px;
+}
+.resume-card-add:hover {
+    border-color: #6b7280;
+}
+.resume-card-add-icon {
+    font-size: 36px;
+    color: #6b7280;
+    line-height: 1;
+}
+.resume-card-add-text {
+    color: #6b7280;
+    font-size: 13px;
+}
+.btn-xs {
+    padding: 3px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+}
+.resume-editor-section {
+    margin-top: 20px;
+    background: #1e2028;
+    border-radius: 12px;
+    padding: 20px;
+}
+.resume-editor-section h3 {
+    margin-bottom: 12px;
+    color: #e4e6eb;
+}
+.resume-editor-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+/* ---- AI Suggestion Card ---- */
+
+.ai-suggestion-card {
+    background: #16191f;
+    border: 1px solid #232730;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.ai-suggestion-card.loading {
+    border-color: #4a9eff40;
+}
+
+.ai-suggestion-card.error {
+    border-color: #e0505040;
+}
+
+.ai-suggestion-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.ai-suggestion-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: linear-gradient(135deg, #4a9eff, #7c5cfc);
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.ai-suggestion-title {
+    font-size: 15px;
+    color: #e6e6e6;
+    font-weight: 500;
+}
+
+.ai-suggestion-body {
+    margin-bottom: 12px;
+}
+
+.ai-suggestion-hint {
+    font-size: 13px;
+    color: #8b92a0;
+    margin-bottom: 8px;
+}
+
+.ai-suggestion-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ai-suggestion-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: #1a1f2a;
+    border: 1px solid #2a3545;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.ai-suggestion-label {
+    color: #4a9eff;
+    font-weight: 500;
+}
+
+.ai-suggestion-value {
+    color: #e6e6e6;
+}
+
+.ai-suggestion-reasoning {
+    font-size: 12px;
+    color: #8b92a0;
+    margin-top: 8px;
+    line-height: 1.5;
+}
+
+.ai-suggestion-error {
+    font-size: 13px;
+    color: #e05050;
+}
+
+.ai-suggestion-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.ai-loading-dots {
+    font-size: 13px;
+    color: #4a9eff;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
+/* ===== Pipeline ===== */
+
+.btn-accent {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    transition: opacity 0.2s;
+}
+.btn-accent:hover { opacity: 0.9; }
+.btn-accent:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.pipeline-options {
+    display: flex;
+    gap: 16px;
+    margin-top: 10px;
+    padding: 8px 0;
+    border-top: 1px solid #1e2028;
+}
+.pipeline-option-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.pipeline-option-item label {
+    font-size: 12px;
+    color: #8b92a0;
+    white-space: nowrap;
+}
+.score-slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.score-slider-wrap input[type="range"] {
+    width: 120px;
+    accent-color: #6366f1;
+}
+.score-slider-value {
+    font-size: 12px;
+    color: #a0a8b8;
+    min-width: 32px;
+}
+
+.pipeline-progress-card {
+    background: #161922;
+    border: 1px solid #1e2028;
+    border-radius: 10px;
+    padding: 16px;
+    margin-top: 16px;
+}
+.pipeline-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.pipeline-phase-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #c8b8ff;
+}
+.pipeline-stats {
+    font-size: 12px;
+    color: #8b92a0;
+}
+.pipeline-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.pipeline-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.pipeline-bar-label {
+    font-size: 12px;
+    color: #8b92a0;
+    min-width: 28px;
+}
+.pipeline-bar-pct {
+    font-size: 12px;
+    color: #6b7280;
+    min-width: 60px;
+    text-align: right;
+}
+.progress-bar-fill.scoring {
+    background: linear-gradient(90deg, #6366f1, #8b5cf6);
+}
