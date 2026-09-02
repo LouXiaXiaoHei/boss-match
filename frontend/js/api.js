@@ -93,4 +93,30 @@ const api = {
     },
     getPipelineProgress() { return this.call('get_pipeline_progress'); },
     cancelPipeline() { return this.call('cancel_pipeline'); },
+
+    // Resume Optimization
+    optimizeResume(resumeId, jobId) {
+        return this.call('optimize_resume', String(resumeId), String(jobId));
+    },
+    getOptimizationProgress() { return this.call('get_optimization_progress'); },
+    cancelOptimization() { return this.call('cancel_optimization'); },
+    getOptimization(id) { return this.call('get_optimization', String(id)); },
+    listOptimizations(resumeId) { return this.call('list_optimizations', String(resumeId)); },
+    deleteOptimization(id) { return this.call('delete_optimization', String(id)); },
+    revertOptimizationSection(optimizationId, sectionIndex) {
+        return this.call('revert_optimization_section', String(optimizationId), String(sectionIndex));
+    },
+
+    // Dashboard
+    getDashboardData() { return this.call('get_dashboard_data'); },
+
+    // Interview Prep
+    startInterviewPrep(resumeId, jobId) {
+        return this.call('start_interview_prep', String(resumeId), String(jobId));
+    },
+    getInterviewPrepProgress() { return this.call('get_interview_prep_progress'); },
+    cancelInterviewPrep() { return this.call('cancel_interview_prep'); },
+    getInterviewPrep(id) { return this.call('get_interview_prep', String(id)); },
+    listInterviewPreps(resumeId) { return this.call('list_interview_preps', String(resumeId)); },
+    deleteInterviewPrep(id) { return this.call('delete_interview_prep', String(id)); },
 };

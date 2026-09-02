@@ -728,3 +728,291 @@ class Repository:
             return dict(row) if row else None
         finally:
             conn.close()
+
+    # ---- Resume Optimization ----
+
+    def save_optimization(self, resume_id: int, job_id: str, job_title: str = "",
+                          company_name: str = "", original_content: str = "",
+                          optimized_content: str = "", diff_sections: list = None,
+                          status: str = "pending", model_name: str = "") -> int:
+        conn = self.db._conn()
+        try:
+            diff_json = json.dumps(diff_sections or [], ensure_ascii=False)
+            cur = conn.execute(
+                """INSERT INTO resume_optimization
+                   (resume_id, job_id, job_title, company_name, original_content,
+                    optimized_content, diff_sections, status, model_name)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(resume_id, job_id) DO UPDATE SET
+                     job_title=excluded.job_title, company_name=excluded.company_name,
+                     original_content=excluded.original_content,
+                     optimized_content=excluded.optimized_content,
+                     diff_sections=excluded.diff_sections, status=excluded.status,
+                     model_name=excluded.model_name, created_at=datetime('now')""",
+                (resume_id, job_id, job_title, company_name, original_content,
+                 optimized_content, diff_json, status, model_name),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def update_optimization(self, optimization_id: int, optimized_content: str = None,
+                            diff_sections: list = None, status: str = None,
+                            model_name: str = None, error_message: str = None):
+        conn = self.db._conn()
+        try:
+            sets = []
+            params = []
+            if optimized_content is not None:
+                sets.append("optimized_content=?")
+                params.append(optimized_content)
+            if diff_sections is not None:
+                sets.append("diff_sections=?")
+                params.append(json.dumps(diff_sections, ensure_ascii=False))
+            if status is not None:
+                sets.append("status=?")
+                params.append(status)
+            if model_name is not None:
+                sets.append("model_name=?")
+                params.append(model_name)
+            if error_message is not None:
+                sets.append("error_message=?")
+                params.append(error_message)
+            if not sets:
+                return
+            params.append(optimization_id)
+            conn.execute(
+                f"UPDATE resume_optimization SET {', '.join(sets)} WHERE id=?", params
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_optimization(self, optimization_id: int) -> dict | None:
+        conn = self.db._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM resume_optimization WHERE id=?", (optimization_id,)
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            if isinstance(d.get("diff_sections"), str):
+                try:
+                    d["diff_sections"] = json.loads(d["diff_sections"])
+                except (json.JSONDecodeError, ValueError):
+                    d["diff_sections"] = []
+            return d
+        finally:
+            conn.close()
+
+    def list_optimizations(self, resume_id: int, limit: int = 50,
+                           offset: int = 0) -> list[dict]:
+        conn = self.db._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM resume_optimization WHERE resume_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (resume_id, limit, offset),
+            ).fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                if isinstance(d.get("diff_sections"), str):
+                    try:
+                        d["diff_sections"] = json.loads(d["diff_sections"])
+                    except (json.JSONDecodeError, ValueError):
+                        d["diff_sections"] = []
+                results.append(d)
+            return results
+        finally:
+            conn.close()
+
+    def delete_optimization(self, optimization_id: int):
+        conn = self.db._conn()
+        try:
+            conn.execute("DELETE FROM resume_optimization WHERE id=?", (optimization_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ---- Interview Prep ----
+
+    def save_interview_prep(self, resume_id: int, job_id: str, job_title: str = "",
+                            company_name: str = "", questions: list = None,
+                            status: str = "pending", model_name: str = "") -> int:
+        conn = self.db._conn()
+        try:
+            questions_json = json.dumps(questions or [], ensure_ascii=False)
+            cur = conn.execute(
+                """INSERT INTO interview_prep
+                   (resume_id, job_id, job_title, company_name, questions, status, model_name)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(resume_id, job_id) DO UPDATE SET
+                     job_title=excluded.job_title, company_name=excluded.company_name,
+                     questions=excluded.questions, status=excluded.status,
+                     model_name=excluded.model_name, created_at=datetime('now')""",
+                (resume_id, job_id, job_title, company_name, questions_json, status, model_name),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def update_interview_prep(self, prep_id: int, questions: list = None,
+                              status: str = None, model_name: str = None,
+                              error_message: str = None):
+        conn = self.db._conn()
+        try:
+            sets = []
+            params = []
+            if questions is not None:
+                sets.append("questions=?")
+                params.append(json.dumps(questions, ensure_ascii=False))
+            if status is not None:
+                sets.append("status=?")
+                params.append(status)
+            if model_name is not None:
+                sets.append("model_name=?")
+                params.append(model_name)
+            if error_message is not None:
+                sets.append("error_message=?")
+                params.append(error_message)
+            if not sets:
+                return
+            params.append(prep_id)
+            conn.execute(
+                f"UPDATE interview_prep SET {', '.join(sets)} WHERE id=?", params
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_interview_prep(self, prep_id: int) -> dict | None:
+        conn = self.db._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM interview_prep WHERE id=?", (prep_id,)
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            if isinstance(d.get("questions"), str):
+                try:
+                    d["questions"] = json.loads(d["questions"])
+                except (json.JSONDecodeError, ValueError):
+                    d["questions"] = []
+            return d
+        finally:
+            conn.close()
+
+    def get_interview_prep_by_job(self, resume_id: int, job_id: str) -> dict | None:
+        """Get interview prep record by resume_id + job_id (unique pair)."""
+        conn = self.db._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM interview_prep WHERE resume_id=? AND job_id=?",
+                (resume_id, job_id),
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            if isinstance(d.get("questions"), str):
+                try:
+                    d["questions"] = json.loads(d["questions"])
+                except (json.JSONDecodeError, ValueError):
+                    d["questions"] = []
+            return d
+        finally:
+            conn.close()
+
+    def list_interview_preps(self, resume_id: int, limit: int = 50,
+                             offset: int = 0) -> list[dict]:
+        conn = self.db._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM interview_prep WHERE resume_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (resume_id, limit, offset),
+            ).fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                if isinstance(d.get("questions"), str):
+                    try:
+                        d["questions"] = json.loads(d["questions"])
+                    except (json.JSONDecodeError, ValueError):
+                        d["questions"] = []
+                results.append(d)
+            return results
+        finally:
+            conn.close()
+
+    def delete_interview_prep(self, prep_id: int):
+        conn = self.db._conn()
+        try:
+            conn.execute("DELETE FROM interview_prep WHERE id=?", (prep_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_dashboard_stats(self, identity: str = "geek") -> dict:
+        """Aggregate dashboard stats for the given identity."""
+        conn = self.db._conn()
+        try:
+            total_jobs = conn.execute(
+                "SELECT COUNT(*) as cnt FROM scraped_job WHERE identity=?", (identity,)
+            ).fetchone()["cnt"]
+
+            total_matches = conn.execute(
+                "SELECT COUNT(*) as cnt FROM match_result WHERE identity=?", (identity,)
+            ).fetchone()["cnt"]
+
+            avg_score_row = conn.execute(
+                "SELECT AVG(score) as avg FROM match_result WHERE identity=?", (identity,)
+            ).fetchone()
+            avg_score = round(avg_score_row["avg"], 2) if avg_score_row["avg"] else 0
+
+            # Top 5 recent matches
+            top_matches = conn.execute(
+                """SELECT mr.target_job_id, mr.score, mr.reasoning,
+                          sj.title, sj.salary, sj.company_industry
+                   FROM match_result mr
+                   LEFT JOIN scraped_job sj ON mr.target_job_id = sj.job_id AND sj.identity = ?
+                   WHERE mr.identity = ?
+                   ORDER BY mr.score DESC LIMIT 5""",
+                (identity, identity),
+            ).fetchall()
+
+            # Active resume
+            active_resume = conn.execute(
+                "SELECT id, name, summary, chunk_count, is_active FROM geek_resume_list WHERE is_active=1 LIMIT 1"
+            ).fetchone()
+
+            # Recent optimizations
+            recent_optimizations = conn.execute(
+                """SELECT id, resume_id, job_id, job_title, company_name, status, created_at
+                   FROM resume_optimization ORDER BY created_at DESC LIMIT 3"""
+            ).fetchall()
+
+            # Interview prep stats
+            total_preps = conn.execute(
+                "SELECT COUNT(*) as cnt FROM interview_prep"
+            ).fetchone()["cnt"]
+
+            recent_preps = conn.execute(
+                """SELECT id, resume_id, job_id, job_title, company_name, status, created_at
+                   FROM interview_prep ORDER BY created_at DESC LIMIT 3"""
+            ).fetchall()
+
+            return {
+                "total_jobs": total_jobs,
+                "total_matches": total_matches,
+                "avg_score": avg_score,
+                "top_matches": [dict(r) for r in top_matches],
+                "active_resume": dict(active_resume) if active_resume else None,
+                "recent_optimizations": [dict(r) for r in recent_optimizations],
+                "total_preps": total_preps,
+                "recent_preps": [dict(r) for r in recent_preps],
+            }
+        finally:
+            conn.close()

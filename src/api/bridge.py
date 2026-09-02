@@ -27,6 +27,8 @@ MATCH_EVENT_TYPES = {
     "match",  # backward compat
     "embedder_init",  # standalone embedder init events
     "pipeline_completed",  # pipeline completion event
+    "optimization_progress", "optimization_completed", "optimization_failed",
+    "interview_prep_progress", "interview_prep_completed", "interview_prep_failed",
 }
 
 
@@ -572,3 +574,161 @@ class AppAPI:
 
     def cancel_pipeline(self):
         return self._get_pipeline().cancel()
+
+    # ---- Resume Optimization ----
+
+    def _get_optimizer(self):
+        if not hasattr(self, '_optimizer') or self._optimizer is None:
+            from src.ai.resume_optimizer import ResumeOptimizer
+            self._optimizer = ResumeOptimizer(
+                self.repo, notify_callback=self._notify_frontend,
+                embedder=self._embedder,
+            )
+        return self._optimizer
+
+    def optimize_resume(self, resume_id_json, job_id_json):
+        """Start resume optimization for a given resume+job pair."""
+        try:
+            resume_id = int(resume_id_json)
+            job_id = str(job_id_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+        return self._get_optimizer().start_optimization(resume_id, job_id)
+
+    def get_optimization_progress(self):
+        """Return current optimization task progress."""
+        return self._get_optimizer().get_progress()
+
+    def cancel_optimization(self):
+        """Cancel current optimization task."""
+        return self._get_optimizer().cancel()
+
+    def get_optimization(self, optimization_id_json):
+        """Return full optimization result."""
+        try:
+            optimization_id = int(optimization_id_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+        result = self.repo.get_optimization(optimization_id)
+        if not result:
+            return {"ok": False, "error": "优化记录不存在"}
+        return {"ok": True, "data": result}
+
+    def list_optimizations(self, resume_id_json):
+        """List optimization records for a resume."""
+        try:
+            resume_id = int(resume_id_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+        results = self.repo.list_optimizations(resume_id)
+        return {"ok": True, "data": {"optimizations": results}}
+
+    def delete_optimization(self, optimization_id_json):
+        """Delete an optimization record."""
+        try:
+            optimization_id = int(optimization_id_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+        self.repo.delete_optimization(optimization_id)
+        return {"ok": True}
+
+    def revert_optimization_section(self, optimization_id_json, section_index_json):
+        """Revert a specific section of an optimization back to original."""
+        try:
+            optimization_id = int(optimization_id_json)
+            section_index = int(section_index_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+
+        opt = self.repo.get_optimization(optimization_id)
+        if not opt:
+            return {"ok": False, "error": "优化记录不存在"}
+
+        sections = opt.get("diff_sections", [])
+        if section_index < 0 or section_index >= len(sections):
+            return {"ok": False, "error": "段落索引超出范围"}
+
+        # Mark section as reverted
+        sections[section_index]["action"] = "reverted"
+
+        # Recompute optimized_content
+        optimized_content = opt["original_content"]
+        for sec in sections:
+            if sec.get("action") == "rewrite" and sec.get("revised"):
+                original = sec.get("original", "")
+                if original and original in optimized_content:
+                    optimized_content = optimized_content.replace(original, sec["revised"], 1)
+            elif sec.get("action") == "add" and sec.get("revised"):
+                optimized_content += "\n\n" + sec["revised"]
+            # "reverted" sections: keep original text (no change)
+
+        self.repo.update_optimization(
+            optimization_id,
+            optimized_content=optimized_content,
+            diff_sections=sections,
+        )
+        return {"ok": True, "data": {"sections": sections, "optimized_content": optimized_content}}
+
+    # ---- Dashboard ----
+
+    def get_dashboard_data(self):
+        """Return dashboard overview data."""
+        stats = self.repo.get_dashboard_stats(self._identity)
+        return {"ok": True, "data": stats}
+
+    # ---- Interview Prep ----
+
+    def _get_prepper(self):
+        if not hasattr(self, '_prepper') or self._prepper is None:
+            from src.ai.interview_prepper import InterviewPrepper
+            self._prepper = InterviewPrepper(
+                self.repo, notify_callback=self._notify_frontend,
+                embedder=self._embedder,
+            )
+        return self._prepper
+
+    def start_interview_prep(self, resume_id_json, job_id_json):
+        """Start interview preparation for a given resume+job pair."""
+        try:
+            resume_id = int(resume_id_json)
+            job_id = str(job_id_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+        return self._get_prepper().start_prep(resume_id, job_id)
+
+    def get_interview_prep_progress(self):
+        """Return current interview prep task progress."""
+        return self._get_prepper().get_progress()
+
+    def cancel_interview_prep(self):
+        """Cancel current interview prep task."""
+        return self._get_prepper().cancel()
+
+    def get_interview_prep(self, prep_id_json):
+        """Return full interview prep result."""
+        try:
+            prep_id = int(prep_id_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+        result = self.repo.get_interview_prep(prep_id)
+        if not result:
+            return {"ok": False, "error": "面试准备记录不存在"}
+        return {"ok": True, "data": result}
+
+    def list_interview_preps(self, resume_id_json):
+        """List interview prep records for a resume."""
+        try:
+            resume_id = int(resume_id_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+        results = self.repo.list_interview_preps(resume_id)
+        return {"ok": True, "data": {"preps": results}}
+
+    def delete_interview_prep(self, prep_id_json):
+        """Delete an interview prep record."""
+        try:
+            prep_id = int(prep_id_json)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "参数格式错误"}
+        self.repo.delete_interview_prep(prep_id)
+        return {"ok": True}

@@ -134,6 +134,44 @@ CREATE TABLE IF NOT EXISTS match_summary (
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(identity, source_id)
 );
+
+CREATE TABLE IF NOT EXISTS resume_optimization (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id INTEGER NOT NULL,
+    job_id TEXT NOT NULL,
+    job_title TEXT DEFAULT '',
+    company_name TEXT DEFAULT '',
+    original_content TEXT NOT NULL DEFAULT '',
+    optimized_content TEXT NOT NULL DEFAULT '',
+    diff_sections TEXT DEFAULT '[]',
+    status TEXT DEFAULT 'pending',
+    model_name TEXT DEFAULT '',
+    error_message TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (resume_id) REFERENCES geek_resume_list(id),
+    UNIQUE(resume_id, job_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resume_optimization_resume_id ON resume_optimization(resume_id);
+CREATE INDEX IF NOT EXISTS idx_resume_optimization_job_id ON resume_optimization(job_id);
+
+CREATE TABLE IF NOT EXISTS interview_prep (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id INTEGER NOT NULL,
+    job_id TEXT NOT NULL,
+    job_title TEXT DEFAULT '',
+    company_name TEXT DEFAULT '',
+    questions TEXT DEFAULT '[]',
+    status TEXT DEFAULT 'pending',
+    model_name TEXT DEFAULT '',
+    error_message TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (resume_id) REFERENCES geek_resume_list(id),
+    UNIQUE(resume_id, job_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_interview_prep_resume_id ON interview_prep(resume_id);
+CREATE INDEX IF NOT EXISTS idx_interview_prep_job_id ON interview_prep(job_id);
 """
 
 
@@ -180,9 +218,7 @@ class Database:
         # Migrate geek_resume -> geek_resume_list
         new_cols = {r[1] for r in conn.execute("PRAGMA table_info(geek_resume_list)").fetchall()}
         if not new_cols:
-            # Table just created by SCHEMA_SQL, no migration needed
             pass
-        # If old geek_resume has data but geek_resume_list is empty, migrate
         try:
             old_row = conn.execute("SELECT content FROM geek_resume WHERE id=1").fetchone()
             new_count = conn.execute("SELECT COUNT(*) FROM geek_resume_list").fetchone()[0]
@@ -195,7 +231,39 @@ class Database:
                     (content, summary),
                 )
         except Exception:
-            pass  # Old table may not exist
+            pass
+
+        # Ensure resume_optimization has UNIQUE constraint (recreate if missing)
+        try:
+            idx_rows = conn.execute("PRAGMA index_list(resume_optimization)").fetchall()
+            has_unique = any("UNIQUE" in str(r) or "unique" in str(r) for r in idx_rows)
+            if not has_unique and len(idx_rows) >= 0:
+                # Table exists but lacks UNIQUE(resume_id, job_id) — migrate data
+                conn.execute("ALTER TABLE resume_optimization RENAME TO resume_optimization_old")
+                conn.execute("""CREATE TABLE IF NOT EXISTS resume_optimization (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    resume_id INTEGER NOT NULL,
+                    job_id TEXT NOT NULL,
+                    job_title TEXT DEFAULT '',
+                    company_name TEXT DEFAULT '',
+                    original_content TEXT NOT NULL DEFAULT '',
+                    optimized_content TEXT NOT NULL DEFAULT '',
+                    diff_sections TEXT DEFAULT '[]',
+                    status TEXT DEFAULT 'pending',
+                    model_name TEXT DEFAULT '',
+                    error_message TEXT DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (resume_id) REFERENCES geek_resume_list(id),
+                    UNIQUE(resume_id, job_id)
+                )""")
+                conn.execute("""INSERT OR IGNORE INTO resume_optimization
+                    SELECT id, resume_id, job_id, job_title, company_name,
+                           original_content, optimized_content, diff_sections,
+                           status, model_name, error_message, created_at
+                    FROM resume_optimization_old""")
+                conn.execute("DROP TABLE resume_optimization_old")
+        except Exception:
+            pass  # Table may not exist yet (first run)
 
         conn.commit()
 
